@@ -449,12 +449,11 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     public override bool SupportsMappedNaturalKeys => true;
 
     /// <summary>
-    ///     jasperfx 3.15.0 (jasperfx#684). False because it is <b>not built yet</b>, not a divergence: Polecat's
-    ///     composite teardown tears down every member rather than asking
-    ///     <c>CompositeProjection.MembersToTearDownAsync</c>. <c>CompositeKeepUnchangedMembersCompliance</c> is
-    ///     excused in the suite inventory until polecat#1147.
+    ///     jasperfx 3.15.0 (jasperfx#684), polecat#1147: Polecat's composite teardown asks
+    ///     <c>CompositeProjection.MembersToTearDownAsync</c> which members to tear down, and leaves a kept member's
+    ///     documents, progression row, dead letters and parks as they are.
     /// </summary>
-    public override bool SupportsKeepingUnchangedCompositeMembers => false;
+    public override bool SupportsKeepingUnchangedCompositeMembers => true;
 
     /// <summary>
     ///     #561 / jasperfx#752. Polecat routes every event hydration path through the shared
@@ -1002,6 +1001,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
 
         public void Snapshot<TDoc>(int stageNumber) where TDoc : notnull
             => _composite.Snapshot<TDoc>(stageNumber);
+
+        /// <summary>#1147 / jasperfx#684. The upstream member has a throwing default.</summary>
+        public void KeepUnchangedMembers() => _composite.KeepUnchangedMembers = true;
 
         /// <summary>
         ///     #704 / jasperfx#917 — add an arbitrary projection to a composite stage, which the async

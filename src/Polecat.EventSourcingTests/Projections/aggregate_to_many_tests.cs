@@ -127,6 +127,34 @@ public class aggregate_to_many_tests : OneOffConfigurationsContext
         aggregates.Single(x => x.Id == acctB).Amount.ShouldBe(50);
     }
 
+    [Fact]
+    public async Task finds_an_aggregate_projection_registered_inside_a_composite_projection()
+    {
+        // #1142 (marten#6193): AggregateToManyAsync() looked only at the top-level projections, so a projection
+        // registered as a stage of a composite threw "no aggregate projection", although every other aggregate
+        // fetch found it
+        ConfigureStore(opts =>
+            opts.Projections.CompositeProjectionFor("Bug1142Balances", x => x.Add<BalanceProjection>()));
+        await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync();
+
+        var acctA = Guid.NewGuid();
+        var acctB = Guid.NewGuid();
+        var stream = Guid.NewGuid();
+
+        await using var session = theStore.LightweightSession();
+        session.Events.Append(stream, new MoneyDeposited(acctA, 100), new MoneyDeposited(acctB, 50),
+            new MoneyDeposited(acctA, 25));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var aggregates = await session.Events.QueryAllRawEvents()
+            .Where(e => e.StreamId == stream)
+            .AggregateToManyAsync<Balance>(TestContext.Current.CancellationToken);
+
+        aggregates.Count.ShouldBe(2);
+        aggregates.Single(x => x.Id == acctA).Amount.ShouldBe(125);
+        aggregates.Single(x => x.Id == acctB).Amount.ShouldBe(50);
+    }
+
     /* The four other facts this class used to carry -- excludes_aggregates_that_should_delete,
      * enrichment_reads_reference_data_from_the_live_session, empty_query_returns_empty_list and
      * throws_when_no_projection_produces_the_aggregate_type -- were retired when Polecat enrolled
@@ -137,6 +165,6 @@ public class aggregate_to_many_tests : OneOffConfigurationsContext
      * The one above stays because it is the DOCS sample: both sample_aggregate_to_many_projection
      * (the types) and sample_aggregate_to_many (the query) are pulled into
      * docs/events/querying.md by mdsnippets, and a compiling, executing sample is worth more than
-     * the duplication costs. It is the only fact in this file that is not carried upstream verbatim.
+     * the duplication costs. The composite fact (#1142) isn't in the shared suite either.
      */
 }

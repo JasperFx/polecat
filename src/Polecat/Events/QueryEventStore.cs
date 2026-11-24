@@ -686,6 +686,9 @@ internal partial class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 
         if (events.Count == 0) return state;
 
+        // #1143 (marten#6194): a version past the end of the stream is no version of it, as in Marten
+        if (version != 0 && version > events[^1].Version) return null;
+
         var aggregator = _options.Projections.AggregatorFor<T>();
         var aggregate = await aggregator.BuildAsync(events, _session, state, token).ConfigureAwait(false);
         if (aggregate == null) return null;
@@ -717,15 +720,10 @@ internal partial class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 
         if (events.Count == 0) return null;
 
-        var aggregator = _options.Projections.AggregatorFor<T>();
-        var eventList = events.ToList();
+        // #1143 (marten#6194): a version past the end of the stream is no version of it
+        if (version != 0 && version > events[^1].Version) return null;
 
-        T? aggregate = null;
-        while (aggregate == null && eventList.Count > 0)
-        {
-            aggregate = await aggregator.BuildAsync(eventList, _session, default, token).ConfigureAwait(false);
-            eventList = eventList.SkipLast(1).ToList();
-        }
+        var aggregate = await buildToLastKnownAsync<T>(events, token).ConfigureAwait(false);
 
         if (aggregate != null)
         {
@@ -733,6 +731,29 @@ internal partial class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
         }
 
         return aggregate;
+    }
+
+    // #1143 (marten#6194): this used to rebuild the aggregate from the start of the stream once for every event it
+    // walked back from the end, quadratic in the length of a trailing run of events that leave no aggregate. One
+    // forward fold finds the longest prefix that leaves an aggregate, and that prefix is then built once, from
+    // scratch, so the aggregate returned is exactly the one the walk back found.
+    private async Task<T?> buildToLastKnownAsync<T>(IReadOnlyList<IEvent> events, CancellationToken token)
+        where T : class
+    {
+        var aggregator = _options.Projections.AggregatorFor<T>();
+
+        T? state = null;
+        var lastKnown = 0;
+        for (var i = 0; i < events.Count; i++)
+        {
+            state = await aggregator.BuildAsync([events[i]], _session, state, token).ConfigureAwait(false);
+            if (state != null) lastKnown = i + 1;
+        }
+
+        if (lastKnown == 0) return null;
+
+        return await aggregator.BuildAsync(events.Take(lastKnown).ToList(), _session, default, token)
+            .ConfigureAwait(false);
     }
 
     public async ValueTask<T?> FetchLatest<T>(Guid id, CancellationToken cancellation = default)

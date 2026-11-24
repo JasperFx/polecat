@@ -25,9 +25,15 @@ Fisher 2 and Wolverine 7.
   commit late inside them. See [events that commit late](/events/projections/async-daemon#events-that-commit-late).
 - **Reading your own writes**: `session.LastAppendedPosition` and `store.WaitForProjectionsAsync(...)`. See
   [reading your own writes](/events/projections/async-daemon#reading-your-own-writes).
+- **`ProjectLatestForCommit()`** returns an aggregate as `SaveChangesAsync()` will write it, versions, timestamps
+  and metadata included, before the commit. `ProjectLatest()` now also sets the identity of a new stream's
+  aggregate. See [ProjectLatestForCommit](/events/projections/project-latest#projectlatestforcommit).
 - **Rebuilding less than a whole projection**: `RebuildSingleStreamAsync` for one stream, and per-identity rebuilds
   of multi-stream projections. See [rebuilding a single stream](/events/projections/async-daemon#rebuilding-a-single-stream).
 - **Rewriting stored events in bulk**, run directly or as a Wolverine job. See [rewriting](/events/rewriting).
+- **Composite projections can keep the members that didn't change** across a version bump, so a change to one
+  member no longer rebuilds the others. See
+  [keeping members that didn't change](/events/projections/composite#keeping-members-that-didn-t-change).
 - **DCB:** a check no longer bumps the tags it read, and a conflict honours the event types the query selects.
 - **Natural keys at parity with Marten 10:** mapped keys (`[MappedNaturalKey<T>]`) that make an `Async` read model
   fetchable by key, nullable keys, one round trip per fetch, fetches by key in a batched query, `FetchForWriting` by
@@ -36,6 +42,9 @@ Fisher 2 and Wolverine 7.
 - **Multi-tenancy:** `Advanced.QueryAcrossAllDatabasesAsync` runs one query against every tenant database
   ([details](/configuration/multitenancy#querying-across-all-databases)), and `opts.Storage.PartitionPerTenant(table)`
   partitions a table of your own per tenant ([details](/documents/multi-tenancy#partitioning-your-own-tables-by-tenant)).
+  `ExposeDynamicTenantSource()` registers a master-table tenancy as `IDynamicTenantSource<string>` for the forms that
+  configure the store late: the `IServiceProvider` overload of `AddPolecat()`, `ConfigurePolecat()` and
+  `AddPolecatStore<T>()` ([details](/configuration/multitenancy#when-the-tenancy-isn-t-known-at-registration)).
 - **`opts.Advanced.UseUnicodeKeys`** stores keys as `nvarchar`, so they can hold any character
   ([details](/configuration/storeoptions#unicode-keys)).
 - **Aspire:** `UseSqlConnectionFromServices()` takes the connection string from the `SqlConnection` that
@@ -184,6 +193,18 @@ existing application can notice:
   a stream key.
 - **`IBatchEvents` gains `FetchLatest`, `FetchForWriting` and `FetchForExclusiveWriting`.** They are default interface
   members, so an implementation of your own still compiles and loads.
+
+## Upgrading to 6.0: live aggregation past the end of a stream finds nothing
+
+`AggregateStreamAsync()` and `AggregateStreamToLastKnownAsync()` with a `version` past the end of the stream now
+return `null`, as they do in Marten ([#1143](https://github.com/JasperFx/polecat/issues/1143),
+[marten#6194](https://github.com/JasperFx/marten/issues/6194)). Polecat 5 returned the aggregate at the stream's last
+event, so asking for version 10 of a 3-event stream looked like an answer about version 10. If you relied on that, ask
+for version `0`, which still means "the latest".
+
+`AggregateStreamToLastKnownAsync()` also no longer rebuilds the aggregate from the start of the stream once for every
+event it walks back over. It folds forward once to find the last event that leaves an aggregate, then builds that
+prefix once, so it returns the same aggregate as before without the quadratic cost of a long trailing run of deletes.
 
 ## Upgrading to 6.0: the net11.0 build uses runtime-async
 
@@ -559,7 +580,7 @@ way Marten does ([#1089](https://github.com/JasperFx/polecat/issues/1089)):
 | :--- | :--- | :--- |
 | Document table of a single stream or multi stream projection at `Version = 3` | `pc_doc_trip` | `pc_doc_trip_3` |
 | Document table at `Version = 1` (the default) | `pc_doc_trip` | `pc_doc_trip` (unchanged) |
-| `Version` of a composite projection's member | its own | the composite's |
+| `Version` of a composite projection's member | its own | the composite's, unless the composite [keeps its unchanged members](/events/projections/composite#keeping-members-that-didn-t-change) |
 
 - **What to do.** If a projection is above version 1 today, 6.0 creates its new table empty while its progression row
   says it is caught up. Rebuild that projection once after upgrading. The same goes for a composite whose members set

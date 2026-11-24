@@ -439,7 +439,70 @@ internal partial class EventOperations : QueryEventStore, IEventOperations, IEve
         // #916: never onto what FetchLatest finds in a session's cache, see FetchUncachedForFolding
         var snapshot = await FetchUncachedForFolding<T>(id, cancellation).ConfigureAwait(false);
         var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation).ConfigureAwait(false);
+        var aggregate = await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation)
+            .ConfigureAwait(false);
+
+        // #1145: a new stream's aggregate has no stored snapshot to carry its identity, so it's set here, as
+        // AggregateStreamAsync sets it
+        if (aggregate != null) TrySetIdentity(aggregate, id);
+        return aggregate;
+    }
+
+    public async ValueTask<T?> ProjectLatestForCommit<T>(Guid id, CancellationToken cancellation = default)
+        where T : class
+    {
+        if (_workTracker.TryFindStream(id, _events.StreamIdScope(_tenantId), out var stream))
+        {
+            prepareEventsAsTheCommitWill(stream!);
+        }
+
+        return await ProjectLatest<T>(id, cancellation).ConfigureAwait(false);
+    }
+
+    public async ValueTask<T?> ProjectLatestForCommit<T>(string key, CancellationToken cancellation = default)
+        where T : class
+    {
+        if (_events.StreamIdentity != StreamIdentity.AsString)
+        {
+            throw new InvalidOperationException(
+                $"ProjectLatestForCommit() takes the stream's id, and this store identifies streams by Guid, so '{key}' " +
+                $"can only be a natural key of {typeof(T).FullNameInCode()}, which can't be resolved to the stream's " +
+                "pending events before the session commits. Pass the stream's id instead, such as the Id of the stream " +
+                "FetchForWriting() returned.");
+        }
+
+        if (_workTracker.TryFindStream(key, _events.StreamIdScope(_tenantId), out var stream))
+        {
+            prepareEventsAsTheCommitWill(stream!);
+        }
+
+        return await ProjectLatest<T>(key, cancellation).ConfigureAwait(false);
+    }
+
+    // #1145 (marten#6149): the same metadata SaveChangesAsync() gives the stream's pending events, given now. The
+    // version has to be known before the commit for that: a new stream starts at 0, and an existing one is at the
+    // version the session expects it to be at, which the commit checks.
+    private void prepareEventsAsTheCommitWill(StreamAction stream)
+    {
+        if (stream.Events.Count == 0) return;
+
+        long baseVersion;
+        if (stream.ActionType == StreamActionType.Start)
+        {
+            baseVersion = 0;
+        }
+        else if (stream.ExpectedVersionOnServer is { } expected)
+        {
+            baseVersion = expected;
+        }
+        else
+        {
+            throw new InvalidOperationException(
+                $"ProjectLatestForCommit() can't know the versions of the events pending for stream '{(object?)stream.Key ?? stream.Id}' " +
+                "until the session commits. Use FetchForWriting(), StartStream(), or Append() with an expected version.");
+        }
+
+        _sessionBase.PrepareEventsAsTheCommitWill(stream, baseVersion);
     }
 
     public async ValueTask<T?> ProjectLatest<T>(string key, CancellationToken cancellation = default)
@@ -454,7 +517,12 @@ internal partial class EventOperations : QueryEventStore, IEventOperations, IEve
         // #916: never onto what FetchLatest finds in a session's cache, see FetchUncachedForFolding
         var snapshot = await FetchUncachedForFolding<T>(key, cancellation).ConfigureAwait(false);
         var aggregator = _sessionBase.Options.Projections.AggregatorFor<T>();
-        return await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation).ConfigureAwait(false);
+        var aggregate = await aggregator.BuildAsync(stream.Events, _sessionBase, snapshot, cancellation)
+            .ConfigureAwait(false);
+
+        // #1145: as in the Guid form
+        if (aggregate != null) TrySetIdentity(aggregate, key);
+        return aggregate;
     }
 
     private async Task<long> ReadVersionFromExistingStream(object streamId, bool forUpdate, CancellationToken token)

@@ -52,4 +52,24 @@ public interface IEventOperations : JasperFx.Events.IEventStoreOperations, IQuer
 
     /// <inheritdoc cref="IQueryEventStore.FetchLatest{T}(string, CancellationToken)" />
     new ValueTask<T?> FetchLatest<T>(string key, CancellationToken cancellation = default) where T : class;
+
+    /// <summary>
+    ///     Project the aggregate T for the stream, including the events pending in this session, exactly as
+    ///     <c>SaveChangesAsync()</c> will write it: the pending events are given now the versions, ids, timestamps,
+    ///     user name, correlation id, causation id and headers that the commit then keeps. Nothing is stored.
+    ///     Behaves as <c>ProjectLatest</c> when the stream has no pending events.
+    /// </summary>
+    /// <remarks>
+    ///     Throws <see cref="InvalidOperationException" /> when the stream's version isn't known before the commit:
+    ///     start it with <c>StartStream</c>, fetch it with <c>FetchForWriting</c>, or append with an expected
+    ///     version. Takes the stream's id, and throws <see cref="InvalidOperationException" /> for a natural key. The
+    ///     commit refuses the stream if its expected version changes after the call. The event sequence is still
+    ///     assigned at commit, and events appended after the call aren't covered by it.
+    /// </remarks>
+    ValueTask<T?> ProjectLatestForCommit<T>(Guid id, CancellationToken cancellation = default) where T : class
+        => throw new NotSupportedException($"{GetType().FullName} does not implement ProjectLatestForCommit()");
+
+    /// <inheritdoc cref="ProjectLatestForCommit{T}(Guid, CancellationToken)" />
+    ValueTask<T?> ProjectLatestForCommit<T>(string id, CancellationToken cancellation = default) where T : class
+        => throw new NotSupportedException($"{GetType().FullName} does not implement ProjectLatestForCommit()");
 }

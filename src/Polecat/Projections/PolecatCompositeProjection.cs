@@ -23,6 +23,13 @@ public class PolecatCompositeProjection : CompositeProjection<IDocumentSession, 
     }
 
     /// <summary>
+    ///     #1147 (jasperfx#684): <c>KeepUnchangedMembers</c> is on and this composite has the single stage it needs, so
+    ///     each member keeps its own version. A multi-stage composite replays every member whatever the setting.
+    /// </summary>
+    internal bool MembersKeepTheirOwnVersions =>
+        KeepUnchangedMembers && Stages.Count(x => x.Projections.Count > 0) <= 1;
+
+    /// <summary>
     ///     Add a projection source to be executed within this composite.
     /// </summary>
     public void Add(IProjectionSource<IDocumentSession, IQuerySession> projection, int stageNumber = 1)

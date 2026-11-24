@@ -92,12 +92,14 @@ public static class AggregateToExtensions
 
         // Validate the projection up front (even for an empty result set) so a call for an aggregate type
         // that has no registered projection is a clear programming error rather than a silent empty list.
-        var projection = options.Projections.All
-                             .OfType<IAggregateProjection>()
-                             .FirstOrDefault(x => x.AggregateType == typeof(T))
-                         ?? throw new ArgumentException(
-                             $"No aggregate projection is registered that produces '{typeof(T).FullNameInCode()}'. AggregateToManyAsync() runs an event query through a registered (multi-stream) projection.",
-                             nameof(queryable));
+        // #1142 (marten#6193): TryFindAggregate, not Projections.All, so a projection registered as a stage of a
+        // composite projection is found too, as every other aggregate fetch finds it.
+        if (!options.Projections.TryFindAggregate(typeof(T), out var projection))
+        {
+            throw new ArgumentException(
+                $"No aggregate projection is registered that produces '{typeof(T).FullNameInCode()}'. AggregateToManyAsync() runs an event query through a registered (multi-stream) projection.",
+                nameof(queryable));
+        }
 
         var idType = findAggregateIdType(projection.GetType())
                      ?? throw new ArgumentException(
