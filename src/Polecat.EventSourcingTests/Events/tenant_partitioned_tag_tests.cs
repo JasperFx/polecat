@@ -430,10 +430,10 @@ public class tenant_partitioned_tag_tests : IAsyncLifetime
         (await TagRowsAsync("blue")).ShouldBe(1);
     }
 
-    private static Task<int> PartitionBoundariesAsync() => CountAsync("""
+    private static Task<int> PartitionBoundariesAsync() => CountAsync($"""
         SELECT COUNT(*) FROM sys.partition_range_values v
         JOIN sys.partition_functions f ON f.function_id = v.function_id
-        WHERE f.name = 'pf_pc_events_tenant_ordinal'
+        WHERE f.name = 'pf_{Schema}_pc_events_tenant_ordinal'
         """);
 
     // ── natural keys ─────────────────────────────────────────────────────────────────────────────

@@ -118,12 +118,12 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
 
         var rows = await TestSchema.QueryAsync($"""
             SELECT d.tenant_id, d.tenant_ordinal, tp.ordinal,
-                   $PARTITION.pf_pc_doc_partitionedtenantdoc_tenant_ordinal(d.tenant_ordinal) AS p,
+                   $PARTITION.pf_{Schema}_pc_doc_partitionedtenantdoc_tenant_ordinal(d.tenant_ordinal) AS p,
                    COUNT(*) AS c
             FROM [{Schema}].[pc_doc_partitionedtenantdoc] d
             JOIN [{Schema}].[pc_tenant_partitions] tp ON tp.tenant_id = d.tenant_id
             GROUP BY d.tenant_id, d.tenant_ordinal, tp.ordinal,
-                     $PARTITION.pf_pc_doc_partitionedtenantdoc_tenant_ordinal(d.tenant_ordinal)
+                     $PARTITION.pf_{Schema}_pc_doc_partitionedtenantdoc_tenant_ordinal(d.tenant_ordinal)
             ORDER BY d.tenant_id
             """);
 
@@ -483,7 +483,7 @@ public class tenant_partitioned_documents_tests : IAsyncLifetime
         // The partition function is named from the versioned table, and every row sits in its tenant's partition.
         var rows = await TestSchema.QueryAsync($"""
             SELECT d.tenant_id, d.tenant_ordinal, tp.ordinal,
-                   $PARTITION.pf_{table}_tenant_ordinal(d.tenant_ordinal) AS p
+                   $PARTITION.pf_{Schema}_{table}_tenant_ordinal(d.tenant_ordinal) AS p
             FROM [{Schema}].[{table}] d
             JOIN [{Schema}].[pc_tenant_partitions] tp ON tp.tenant_id = d.tenant_id
             ORDER BY d.tenant_id

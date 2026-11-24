@@ -89,7 +89,7 @@ public class tenant_partition_stale_ordinal_tests : IAsyncLifetime
             SELECT CAST(v.value AS int)
             FROM sys.partition_range_values v
             JOIN sys.partition_functions f ON f.function_id = v.function_id
-            WHERE f.name = 'pf_{table}_tenant_ordinal'
+            WHERE f.name = 'pf_{Schema}_{table}_tenant_ordinal'
             """);
         return rows.Select(x => (int)x[0]).ToList();
     }

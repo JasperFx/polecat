@@ -601,9 +601,9 @@ public class AdvancedOperations
             {
                 if (table.SqlServerPartitioning is not { } partitioning) continue;
 
-                // #1041: a partition scheme is database-wide and named after the table, so another store's
-                // pc_events in another schema of this database can still be on it. Leave it for the last one
-                // out.
+                // #1041: a partition scheme is database-wide. Since Weasel 10.0 its name carries the schema
+                // (#1140), but a table partitioned earlier stays on the old shared scheme, so another store's
+                // table in another schema of this database can still be on it. Leave it for the last one out.
                 var scheme = partitioning.PartitionSchemeName(table);
                 writer.WriteLine("IF NOT EXISTS (SELECT 1 FROM sys.partition_schemes ps " +
                                  "JOIN sys.indexes i ON i.data_space_id = ps.data_space_id " +

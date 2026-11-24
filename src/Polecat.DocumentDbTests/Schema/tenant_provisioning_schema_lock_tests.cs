@@ -362,11 +362,11 @@ public class tenant_provisioning_schema_lock_tests : IAsyncLifetime
 
     private static async Task<IReadOnlyList<int>> StreamBoundariesAsync()
     {
-        var rows = await TestSchema.QueryAsync("""
+        var rows = await TestSchema.QueryAsync($"""
             SELECT CAST(v.value AS int)
             FROM sys.partition_range_values v
             JOIN sys.partition_functions f ON f.function_id = v.function_id
-            WHERE f.name = 'pf_pc_streams_tenant_ordinal'
+            WHERE f.name = 'pf_{Schema}_pc_streams_tenant_ordinal'
             """);
         return rows.Select(x => (int)x[0]).ToList();
     }

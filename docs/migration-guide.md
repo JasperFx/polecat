@@ -358,6 +358,35 @@ partition scheme. Set `opts.EventGraph.UseArchivedStreamPartitioning = true` to 
 schema migration moves `pc_events` back off the scheme, rewriting the table as described above.
 :::
 
+### Partition functions and schemes carry the schema in their names {#partition-objects-carry-the-schema}
+
+A SQL Server partition function and partition scheme belong to the database, not to a schema. Before 6.0, Weasel named
+them after the table and column alone, for example `pf_pc_events_tenant_ordinal`. So two Polecat stores in different
+schemas of one database put their tables on the **same** function. With per-tenant partitioning, each store keeps its
+own tenant registry and ordinals, so one store's `RemovePolecatManagedTenantsAsync` could merge away a boundary the other
+store's tables still used. RANGE-partitioned documents with different boundaries collided the same way.
+
+Weasel 10.0 ([weasel#920](https://github.com/JasperFx/weasel/issues/920),
+[#1140](https://github.com/JasperFx/polecat/issues/1140)) puts the schema in the name:
+`pf_{schema}_{table}_{column}` and `ps_{schema}_{table}_{column}`.
+
+- **A table partitioned for the first time on 6.0** gets objects of its own.
+- **A table already partitioned before 6.0** keeps the objects it is on. Nothing is renamed, dropped or rebuilt
+  on upgrade, and every `SPLIT`, `MERGE` and `NEXT USED` targets the function the table is actually bound to.
+- **If two schemas' tables still share a function**, Weasel's managed partition strategies log a warning once per
+  function. To find such functions, call `SqlServerPartitionObjects.FindSharedAcrossSchemasAsync`. To move a table onto
+  objects of its own, see Weasel's
+  [Partition Function and Scheme Names](https://weasel.jasperfx.net/sqlserver/partitioning#partition-function-and-scheme-names).
+
+A raw query that names a partition function, for example `$PARTITION.pf_pc_events_tenant_ordinal(...)`, has to use the
+new name for a table partitioned on 6.0.
+
+Polecat also serializes partition DDL across every store in a database
+([#1136](https://github.com/JasperFx/polecat/issues/1136)). A store that declares a partitioned table takes a
+database-wide app lock, `polecat:migrate:partition-objects`, after its own schema's migration lock. Two stores
+provisioning at once therefore can't drop or half-create each other's objects, which still matters for a table that
+is on a shared, pre-6.0 function.
+
 ## Upgrading to 6.0: skipped high water ranges are recorded, and late events are recovered
 
 The async daemon now records every sequence range its high water mark skips in a new table, `pc_high_water_skips`
