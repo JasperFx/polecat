@@ -355,6 +355,13 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
         => Polecat.Internal.SqlEscaping.QualifiedName(DatabaseSchemaName, NaturalKeyTableNameFor(aggregateType));
 
     /// <summary>
+    ///     #1131: the fetch plan for an aggregate by a natural key type, owned or mapped, or null when that type is
+    ///     not one of the aggregate's natural keys. Built on first use, because an aggregate with an owned key and
+    ///     no registered projection is registered then.
+    /// </summary>
+    internal ConcurrentDictionary<(Type Aggregate, Type Key), object?> NaturalKeyPlans { get; } = new();
+
+    /// <summary>
     ///     Every registered natural key definition — one per aggregate projection that declares a
     ///     <c>[NaturalKey]</c> property, and therefore one lookup table each.
     /// </summary>
@@ -621,11 +628,30 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
     internal string LockedStreamReadSql(string columns, string match, string tenantId, SqlCommand command,
         string? ids = null)
     {
+        var sql = LockedStreamReadSqlWithOrdinal(columns, match, tenantId, out var ordinal, ids);
+        if (ordinal.HasValue)
+        {
+            command.Parameters.Add("@tenant_ordinal", SqlDbType.Int).Value = ordinal.Value;
+        }
+
+        return sql;
+    }
+
+    /// <summary>
+    ///     <see cref="LockedStreamReadSql" /> for a caller that names
+    ///     <c>@tenant_ordinal</c> itself, such as a fetch by natural key that declares it as a variable inside a
+    ///     batched command (#1131).
+    /// </summary>
+    /// <param name="ordinal">The value <c>@tenant_ordinal</c> must hold, or null when the text doesn't use it.</param>
+    internal string LockedStreamReadSqlWithOrdinal(string columns, string match, string tenantId, out int? ordinal,
+        string? ids = null)
+    {
         var withOrdinal = false;
-        if (UseTenantPartitionedEvents && TenantOrdinals.TryGetOrdinal(tenantId, out var ordinal))
+        ordinal = null;
+        if (UseTenantPartitionedEvents && TenantOrdinals.TryGetOrdinal(tenantId, out var found))
         {
             withOrdinal = true;
-            command.Parameters.Add("@tenant_ordinal", SqlDbType.Int).Value = ordinal;
+            ordinal = found;
         }
 
         // #1128: the text depends on nothing else, and building it cost about 9 KB of strings on every

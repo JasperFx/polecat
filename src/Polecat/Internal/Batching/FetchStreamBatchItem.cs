@@ -103,16 +103,28 @@ internal class FetchStreamBatchItem : IBatchQueryItem
 
     public async Task ReadResultSetAsync(DbDataReader reader, CancellationToken token)
     {
-        var ctx = new EventHydrationContext(_events, _serializer, _streamId, defaultTenantId: _tenantId);
+        _tcs.SetResult(await ReadEventsAsync(reader, _events, _serializer, _streamId, _tenantId, token)
+            .ConfigureAwait(false));
+    }
+
+    /// <summary>
+    ///     Hydrate one stream's events from the current result set, through <see cref="PcEventsRowReader" />.
+    ///     Shared with the fetches by natural key (#1131), which read the events of a stream they have only
+    ///     just resolved, in the same command.
+    /// </summary>
+    internal static async Task<IReadOnlyList<IEvent>> ReadEventsAsync(DbDataReader reader, EventGraph events,
+        ISerializer serializer, object streamId, string tenantId, CancellationToken token)
+    {
+        var ctx = new EventHydrationContext(events, serializer, streamId, defaultTenantId: tenantId);
 
         // Same per-batch hoists as the standalone fetch: metadata ordinals computed once, a single-slot
         // type→mapping cache, and the StreamIdentity specialization picked once rather than per row.
-        var slots = MetadataSlots.Compute(_events.EventOptions);
+        var slots = MetadataSlots.Compute(events.EventOptions);
         var cache = new EventTypeCache();
 
         var results = new List<IEvent>();
 
-        if (_events.StreamIdentity == StreamIdentity.AsGuid)
+        if (events.StreamIdentity == StreamIdentity.AsGuid)
         {
             while (await reader.ReadAsync(token).ConfigureAwait(false))
             {
@@ -131,6 +143,20 @@ internal class FetchStreamBatchItem : IBatchQueryItem
             }
         }
 
-        _tcs.SetResult(results);
+        return results;
+    }
+
+    /// <summary>
+    ///     The events of the stream that <paramref name="stream" /> names, a T-SQL variable already holding its
+    ///     id, from version 1. The batched form of <see cref="EventGraph.StreamEventsSql" />, for a stream whose
+    ///     id the same command found (#1131).
+    /// </summary>
+    internal static void WriteStreamEventsSql(ICommandBuilder builder, EventGraph events, string stream,
+        string tenant)
+    {
+        var select =
+            $"SELECT {PcEventsRowReader.ComposeSelectColumns(events.EventOptions)} FROM {events.EventsTableName} WHERE stream_id = {stream} AND tenant_id = {tenant}";
+        builder.Append(events.StreamEventsSql(select, " AND is_archived = 0 ORDER BY version", stream, tenant));
+        builder.Append("\n");
     }
 }

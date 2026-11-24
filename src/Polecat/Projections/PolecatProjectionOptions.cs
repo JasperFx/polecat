@@ -24,7 +24,7 @@ public class PolecatProjectionOptions
     private readonly EventGraph _events;
     private StoreOptions? _storeOptions;
     private IInlineProjection<IDocumentSession>[]? _inlineProjections;
-    private readonly Lazy<DocumentProvider[]> _inlineProjectedProviders;
+    private Lazy<DocumentProvider[]> _inlineProjectedProviders;
 
     internal PolecatProjectionOptions(EventGraph events) : base(events, "polecat")
     {
@@ -33,13 +33,27 @@ public class PolecatProjectionOptions
         // #548: see InlineProjectedProviders. Lazy, not eager, because registration is still open when
         // this runs — StoreOptions constructs the graph before any Projections.Add call, and wires
         // StoreOptions.Providers later still, when the DocumentStore is built.
-        _inlineProjectedProviders = new Lazy<DocumentProvider[]>(() => All
-            .Where(x => x.Lifecycle == ProjectionLifecycle.Inline)
-            .SelectMany(x => x.PublishedTypes())
-            .Distinct()
-            .Where(t => !_storeOptions!.CustomProjectionStorageProviders.ContainsKey(t))
-            .Select(t => _storeOptions!.Providers.GetProvider(t))
-            .ToArray());
+        _inlineProjectedProviders = inlineProjectedProviders();
+    }
+
+    private Lazy<DocumentProvider[]> inlineProjectedProviders() => new(() => All
+        .Where(x => x.Lifecycle == ProjectionLifecycle.Inline)
+        .SelectMany(x => x.PublishedTypes())
+        .Distinct()
+        .Where(t => !_storeOptions!.CustomProjectionStorageProviders.ContainsKey(t))
+        .Select(t => _storeOptions!.Providers.GetProvider(t))
+        .ToArray());
+
+    /// <summary>
+    ///     #1131: an Inline projection registered after the store was built, which is what a first fetch by an
+    ///     owned natural key does for an aggregate with no projection. The inline projections and their published
+    ///     types are worked out again on next use, so the next save runs it and keeps its lookup.
+    /// </summary>
+    internal void AddInlineProjectionAfterTheStoreWasBuilt(IProjectionSource<IDocumentSession, IQuerySession> projection)
+    {
+        All.Add(projection);
+        _inlineProjections = null;
+        _inlineProjectedProviders = inlineProjectedProviders();
     }
 
     internal void SetStoreOptions(StoreOptions options) => _storeOptions = options;
@@ -233,6 +247,32 @@ public class PolecatProjectionOptions
         where T : Subscriptions.ISubscription, new()
     {
         Subscribe(new T(), configure);
+    }
+
+    /// <summary>
+    ///     #1131 (marten#6150): a natural key of the store's own stream identity type, a bare <c>string</c> on a
+    ///     string-identity store or a <c>Guid</c> on a Guid one, can never be fetched by. <c>FetchForWriting&lt;T,
+    ///     string&gt;</c> and the other fetches by <c>string</c> are fetches by stream key there, which would
+    ///     silently find nothing, or start a new stream named after the key. A bare <c>string</c> key on a
+    ///     Guid-identity store is a natural key, and is unaffected.
+    /// </summary>
+    internal void AssertNaturalKeysAreNotStreamIdentities()
+    {
+        var streamIdentityType = _events.StreamIdentity == StreamIdentity.AsGuid ? typeof(Guid) : typeof(string);
+
+        var messages = AllAggregateProjections()
+            .SelectMany(aggregate => new[] { aggregate.NaturalKeyDefinition }
+                .Concat(aggregate.MappedNaturalKeyDefinitions)
+                .OfType<NaturalKeyDefinition>()
+                .Where(x => x.OuterType == streamIdentityType)
+                .Select(x =>
+                    $"Natural key {aggregate.AggregateType.FullNameInCode()}.{x.Member.Name} has type {streamIdentityType.FullNameInCode()}, the same type as this store's stream identity ({_events.StreamIdentity}), so fetching by it would fetch by stream identity instead. Wrap it in a strong-typed identifier, such as a record struct with a single Value property."))
+            .ToArray();
+
+        if (messages.Length > 0)
+        {
+            throw new InvalidProjectionException(messages);
+        }
     }
 
     /// <summary>

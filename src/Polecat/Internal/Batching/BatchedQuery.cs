@@ -41,6 +41,23 @@ internal class BatchedQuery : IBatchedQuery
 
     private bool _executed;
 
+    /// <summary>
+    ///     #1131: a batched <c>FetchForWriting</c> provisions the tenant's event partition first, as the standalone
+    ///     fetch does, and a batched <c>FetchForExclusiveWriting</c> also opens the session's transaction, so that
+    ///     its stream stays locked until the session commits.
+    /// </summary>
+    internal void RequireEventTenant(string tenantId, bool exclusive, object id)
+    {
+        _eventTenant = tenantId;
+        if (exclusive)
+        {
+            _exclusiveId ??= id;
+        }
+    }
+
+    private string? _eventTenant;
+    private object? _exclusiveId;
+
     internal void TrackProvider(DocumentProvider provider) => _involvedProviders.Add(provider);
 
     public Task<bool> CheckExists<T>(Guid id) where T : class => AddCheckExists<T>(id);
@@ -164,6 +181,18 @@ internal class BatchedQuery : IBatchedQuery
             await _tableEnsurer.EnsureEventStoreSchemaAsync(_session.HasOpenTransaction, token).ConfigureAwait(false);
         }
 
+        if (_eventTenant != null && _session is DocumentSessionBase documents)
+        {
+            var exclusive = _exclusiveId != null;
+            await documents.ProvisionEventTenantBeforeHoldingLocksAsync(_eventTenant, exclusive, token)
+                .ConfigureAwait(false);
+
+            if (exclusive)
+            {
+                await documents.BeginTransactionAsync(token).ConfigureAwait(false);
+            }
+        }
+
         // Build the combined batch (connection-less; lifetime sets it at execution)
         await using var batch = new SqlBatch();
         var builder = new BatchBuilder(batch);
@@ -174,17 +203,26 @@ internal class BatchedQuery : IBatchedQuery
         }
 
         builder.Compile();
-        await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
-        // Process each result set
-        for (var i = 0; i < _items.Count; i++)
+        try
         {
-            if (i > 0)
-            {
-                await reader.NextResultAsync(token).ConfigureAwait(false);
-            }
+            await using var reader = (await _session.ExecuteReaderAsync(batch, token).ConfigureAwait(false));
 
-            await _items[i].ReadResultSetAsync(reader, token).ConfigureAwait(false);
+            // Process each result set
+            for (var i = 0; i < _items.Count; i++)
+            {
+                if (i > 0)
+                {
+                    await reader.NextResultAsync(token).ConfigureAwait(false);
+                }
+
+                await _items[i].ReadResultSetAsync(reader, token).ConfigureAwait(false);
+            }
+        }
+        // #1131, as FetchForExclusiveWriting standalone (#652): a lock that couldn't be had is StreamLockedException
+        catch (Exception e) when (_exclusiveId != null && EventOperations.IsLockFailure(e))
+        {
+            throw new JasperFx.Events.StreamLockedException(_exclusiveId, EventOperations.FindLockFailure(e));
         }
     }
 

@@ -103,6 +103,13 @@ internal interface IPolecatBatchLoadStorage<TDoc> where TDoc : notnull
     /// <summary>Appends <c>SELECT … FROM … WHERE id = @p [AND tenant] [AND soft-delete]</c> (no trailing <c>;</c>).</summary>
     void WriteLoadByIdSql(Weasel.SqlServer.ICommandBuilder builder, object id, string tenantId);
 
+    /// <summary>
+    ///     Appends <c>SELECT … FROM … WHERE id = {idExpression} [AND tenant] [AND soft-delete]</c> (no trailing
+    ///     <c>;</c>), for an id the same command has only just resolved into a T-SQL variable: an Inline aggregate
+    ///     fetched by its natural key (#1131).
+    /// </summary>
+    void WriteLoadByIdExpressionSql(Weasel.SqlServer.ICommandBuilder builder, string idExpression, string tenantId);
+
     /// <summary>Appends <c>SELECT … FROM … WHERE id IN (…) [AND tenant] [AND soft-delete]</c> (no trailing <c>;</c>).</summary>
     void WriteLoadManySql(Weasel.SqlServer.ICommandBuilder builder, IReadOnlyList<object> ids, string tenantId);
 
@@ -286,6 +293,11 @@ internal interface IPolecatClosedShapeStorage<TDoc, TId>
     void IPolecatBatchLoadStorage<TDoc>.WriteLoadByIdSql(Weasel.SqlServer.ICommandBuilder builder, object id,
         string tenantId)
         => PolecatRules.WriteLoadByIdSql(builder, PolecatRules.ReadSqlFor(TrackingMode).SelectClause, id, tenantId);
+
+    void IPolecatBatchLoadStorage<TDoc>.WriteLoadByIdExpressionSql(Weasel.SqlServer.ICommandBuilder builder,
+        string idExpression, string tenantId)
+        => PolecatRules.WriteLoadByIdExpressionSql(builder, PolecatRules.ReadSqlFor(TrackingMode).SelectClause,
+            idExpression, tenantId);
 
     void IPolecatBatchLoadStorage<TDoc>.WriteLoadManySql(Weasel.SqlServer.ICommandBuilder builder,
         IReadOnlyList<object> ids, string tenantId)

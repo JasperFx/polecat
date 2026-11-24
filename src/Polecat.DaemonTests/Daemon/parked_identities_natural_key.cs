@@ -36,6 +36,32 @@ public partial class ParkedKeyedGuidCounter
     }
 }
 
+/// <summary>
+///     #1131 (marten#6150): an Async read model of the same streams that owns no key, mapped to
+///     <see cref="ParkedKeyedGuidCounter" />'s, whose lookup names its parked identities.
+/// </summary>
+public partial class ParkedMappedGuidCounter
+{
+    public Guid Id { get; set; }
+
+    [MappedNaturalKey<ParkedKeyedGuidCounter>]
+    public string Code { get; set; } = string.Empty;
+
+    public int Ticks { get; set; }
+
+    public static ParkedMappedGuidCounter Create(IEvent<ParkStarted> e) => new() { Id = e.StreamId };
+
+    public void Apply(ParkKeyAssigned e) => Code = e.Code;
+
+    public void Apply(ParkTicked e) => Ticks++;
+
+    public void Apply(IEvent<ParkPoisoned> e)
+    {
+        ParkingPoison.ThrowIfPoisoned(e);
+        Ticks++;
+    }
+}
+
 /// <summary>The string stream twin of <see cref="ParkedKeyedGuidCounter" />.</summary>
 public partial class ParkedKeyedStringCounter
 {
@@ -84,7 +110,7 @@ public class parked_identities_natural_key : IAsyncLifetime
         for (var i = _disposables.Count - 1; i >= 0; i--) await _disposables[i].DisposeAsync();
     }
 
-    private async Task<DocumentStore> aStoreAsync(string schema, bool guids, bool conjoined)
+    private async Task<DocumentStore> aStoreAsync(string schema, bool guids, bool conjoined, bool mapped = false)
     {
         await TestSchema.DropSchemaTablesAsync(schema);
 
@@ -107,6 +133,7 @@ public class parked_identities_natural_key : IAsyncLifetime
             {
                 opts.Projections.Snapshot<ParkedKeyedGuidCounter>(SnapshotLifecycle.Async);
                 opts.Projections.Snapshot<ParkedGuidCounter>(SnapshotLifecycle.Async);
+                if (mapped) opts.Projections.Snapshot<ParkedMappedGuidCounter>(SnapshotLifecycle.Async);
             }
             else
             {
@@ -216,6 +243,19 @@ public class parked_identities_natural_key : IAsyncLifetime
         rows.Single(x => x.TenantId == "blue").NaturalKey.ShouldBe("BLUE-1");
 
         (await parkedAsync(store, keyless(guids))).ShouldAllBe(x => x.NaturalKey == null);
+    }
+
+    [Fact]
+    public async Task a_read_model_with_a_mapped_key_shows_the_key_its_source_keeps()
+    {
+        var store = await aStoreAsync("parked_nk_mapped", guids: true, conjoined: false, mapped: true);
+
+        var stream = Guid.NewGuid();
+        await aPoisonedStreamAsync(store, stream, null, "ORD-3003");
+        await store.Database.WaitForNonStaleProjectionDataAsync(Generous);
+
+        (await parkedAsync(store, nameof(ParkedMappedGuidCounter)))
+            .Single(x => x.IdentityText == ParkedIdentityText.Format(stream)).NaturalKey.ShouldBe("ORD-3003");
     }
 
     [Fact]

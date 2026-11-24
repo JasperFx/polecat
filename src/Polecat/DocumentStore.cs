@@ -22,7 +22,6 @@ public partial class DocumentStore : IDocumentStore
     private readonly DocumentTableEnsurer _tableEnsurer;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DocumentTableEnsurer> _tableEnsurers =
         new(StringComparer.OrdinalIgnoreCase);
-    private Lazy<IInlineProjection<IDocumentSession>[]> _inlineProjections;
 
     // #725: DeadLetterEvent is registered below but named by no consumer code, so the trimmer
 
@@ -111,13 +110,13 @@ public partial class DocumentStore : IDocumentStore
         // Initialize projection graph - builds async shard registry
         options.Projections.AssertValidity(options);
 
+        // #1131 (marten#6150): a natural key of the stream identity's own type can't be fetched by
+        options.Projections.AssertNaturalKeysAreNotStreamIdentities();
+
         // #1134 (marten#6144): name each Inline projection whose RaiseSideEffects() now runs inside every save
         options.EventGraph.WarnAboutInlineSideEffects(options.DotNetLogger
                                                       ?? options.LogFactory?.CreateLogger(typeof(DocumentStore))
                                                       ?? NullLogger.Instance);
-
-        _inlineProjections = new Lazy<IInlineProjection<IDocumentSession>[]>(
-            () => options.Projections.BuildInlineProjections());
 
         Advanced = new AdvancedOperations(this);
     }
@@ -140,7 +139,9 @@ public partial class DocumentStore : IDocumentStore
     /// </summary>
     internal EventGraph Events => Database.Events;
 
-    internal IInlineProjection<IDocumentSession>[] InlineProjections => _inlineProjections.Value;
+    // #1131: read through the projection graph, which caches the array, so that a projection registered on the fly
+    // by a first fetch by natural key is picked up
+    internal IInlineProjection<IDocumentSession>[] InlineProjections => Options.Projections.BuildInlineProjections();
 
     /// <summary>
     ///     #591 — the projection coordinator built over THIS store, if the host registered one.

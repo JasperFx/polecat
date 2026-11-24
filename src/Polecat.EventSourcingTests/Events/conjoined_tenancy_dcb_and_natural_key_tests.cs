@@ -323,10 +323,12 @@ public class conjoined_tenancy_dcb_and_natural_key_tests : OneOffConfigurationsC
         redStream.Aggregate.ShouldNotBeNull();
         redStream.Aggregate!.CustomerName.ShouldBe("Red Alice");
 
-        // Blue tenant cannot fetch by the same natural key - should throw because stream doesn't exist
+        // Blue tenant doesn't see red's stream by the same natural key: to blue, it is a new stream (#1131)
         await using var blueQuery = theStore.LightweightSession(new SessionOptions { TenantId = BlueTenant });
-        await Should.ThrowAsync<InvalidOperationException>(
-            blueQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken));
+        var blue = await blueQuery.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber,
+            TestContext.Current.CancellationToken);
+        blue.Aggregate.ShouldBeNull();
+        blue.StartingVersion.ShouldBe(0);
     }
 
     [Fact]

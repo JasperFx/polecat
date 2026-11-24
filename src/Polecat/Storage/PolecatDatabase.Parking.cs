@@ -84,7 +84,8 @@ public partial class PolecatDatabase
                      .GroupBy(x => x.Row.ProjectionName))
         {
             if (!_options.Projections.TryFindProjection(projection.Key, out var source)
-                || source is not IAggregateProjection { NaturalKeyDefinition: { } naturalKey })
+                || source is not IAggregateProjection aggregate
+                || lookupFor(aggregate) is not { } naturalKey)
             {
                 continue;
             }
@@ -108,6 +109,17 @@ public partial class PolecatDatabase
 
         return result ?? rows;
     }
+
+    /// <summary>
+    ///     #1131 (marten#6150): the key whose lookup names an aggregate's streams: its owned key, or else its first
+    ///     mapped key, read through the source projection's lookup. Mapped keys mostly sit on Async read models,
+    ///     which are the projections that park.
+    /// </summary>
+    private static NaturalKeyDefinition? lookupFor(IAggregateProjection aggregate)
+        => aggregate.NaturalKeyDefinition
+           ?? aggregate.MappedNaturalKeyDefinitions
+               .Select(x => x.SourceProjectionDefinition)
+               .FirstOrDefault(x => x != null);
 
     // The natural key of each (tenant, stream), as text. The tenant is the empty string unless the store is conjoined.
     private async Task<Dictionary<(string Tenant, object Stream), string>> readNaturalKeysAsync(string table,

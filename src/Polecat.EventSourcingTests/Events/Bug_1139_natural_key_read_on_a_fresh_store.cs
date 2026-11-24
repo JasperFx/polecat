@@ -44,28 +44,29 @@ public class Bug_1139_natural_key_read_on_a_fresh_store : IAsyncLifetime
             TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
+    // #1131 (marten#6150): an unknown key is a new stream, as an unknown stream id is
     [Fact]
-    public async Task fetch_for_writing_by_natural_key_refuses_an_unknown_key()
+    public async Task fetch_for_writing_by_natural_key_starts_a_new_stream_for_an_unknown_key()
     {
         using var store = CreateStore();
         await using var session = store.LightweightSession();
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
-            session.Events.FetchForWriting<Shipment, ShipmentCode>(new ShipmentCode("SHP-1"),
-                TestContext.Current.CancellationToken));
-        ex.Message.ShouldContain("No active stream found for natural key");
+        var stream = await session.Events.FetchForWriting<Shipment, ShipmentCode>(new ShipmentCode("SHP-1"),
+            TestContext.Current.CancellationToken);
+        stream.Aggregate.ShouldBeNull();
+        stream.StartingVersion.ShouldBe(0);
     }
 
     [Fact]
-    public async Task fetch_for_exclusive_writing_by_natural_key_refuses_an_unknown_key()
+    public async Task fetch_for_exclusive_writing_by_natural_key_starts_a_new_stream_for_an_unknown_key()
     {
         using var store = CreateStore();
         await using var session = store.LightweightSession();
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
-            session.Events.FetchForExclusiveWriting<Shipment, ShipmentCode>(new ShipmentCode("SHP-1"),
-                TestContext.Current.CancellationToken));
-        ex.Message.ShouldContain("No active stream found for natural key");
+        var stream = await session.Events.FetchForExclusiveWriting<Shipment, ShipmentCode>(new ShipmentCode("SHP-1"),
+            TestContext.Current.CancellationToken);
+        stream.Aggregate.ShouldBeNull();
+        stream.StartingVersion.ShouldBe(0);
     }
 
     [Fact]

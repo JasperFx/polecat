@@ -26,9 +26,21 @@ public class natural_key_inline_guid_tests : OneOffConfigurationsContext
 
         var orderNumber = new OrderNumber("ORD-DOES-NOT-EXIST");
 
+        // #1131 (marten#6150): a key no stream has is a new stream, as an unknown stream id is
         await using var session = theStore.LightweightSession();
-        await Should.ThrowAsync<InvalidOperationException>(
-            session.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber, TestContext.Current.CancellationToken));
+        var stream = await session.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber,
+            TestContext.Current.CancellationToken);
+        stream.Aggregate.ShouldBeNull();
+        stream.StartingVersion.ShouldBe(0);
+        stream.Id.ShouldNotBe(Guid.Empty);
+
+        // The stream claims the key with the first event that sets it
+        stream.AppendOne(new NkOrderCreated(orderNumber, "Alice"));
+        await session.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        await using var query = theStore.LightweightSession();
+        (await query.Events.FetchLatest<OrderAggregate, OrderNumber>(orderNumber,
+            TestContext.Current.CancellationToken))!.Id.ShouldBe(stream.Id);
     }
 
     [Fact]
@@ -220,10 +232,10 @@ public class natural_key_string_identity_tests : OneOffConfigurationsContext
  *                                    compiling, executing sample earns its one duplicate copy.
  *
  *   fetch_for_writing_new_stream_by_natural_key
- *                                 -- the MISS case, which the suite deliberately excludes because
- *                                    the products disagree: Marten returns a null aggregate at
- *                                    version 0, Polecat throws (NaturalKeyFetchPlanner). Polecat's
- *                                    answer is a product decision and needs a product test.
+ *                                 -- the MISS case, which the suite deliberately excludes. Polecat
+ *                                    used to throw here; since #1131 it answers as Marten does, with
+ *                                    a new stream at version 0 that claims the key once an event
+ *                                    sets it.
  *
  *   natural_key_with_primitive_string_type
  *                                 -- overlaps the suite's primitive-key fact, kept because it also
