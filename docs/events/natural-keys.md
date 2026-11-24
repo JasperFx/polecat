@@ -177,7 +177,71 @@ Natural keys can change over the lifetime of a stream. When an event mapped with
 
 ## Null and Default Keys
 
-If a mapped event produces a `null` or default key value, Polecat silently skips writing to the lookup table. This means streams where the natural key has not yet been assigned will not appear in natural key lookups, but will still be accessible by stream id.
+What a `null` key value means depends on the source that produced it.
+
+- An **explicit** source can remove a stream's key on purpose: a `[NaturalKeySource]` static method that returns the
+  key type, or a `NaturalKeyFor()` registration. When it returns `null`, the lookup row is deleted, the stream can no
+  longer be found by its old key, and that key is free for another stream to claim. That includes a strong-typed key
+  whose wrapped value is null.
+- A source Polecat **infers**, by reading a property of the key's type off the event or by running your `Apply`
+  method, reads a `null` as "this event carries no key". The stream keeps its key. So an `Apply` that only sets the
+  key when its event carries one does what it says.
+
+A stream that has never been given a key has no lookup row, so it can't be found by natural key, but it can still be
+fetched by its stream id.
+
+<!-- snippet: sample_polecat_natural_key_sources_and_null -->
+<a id='snippet-sample_polecat_natural_key_sources_and_null'></a>
+```cs
+public record ShipmentCode(string Value);
+
+public record ShipmentBooked(ShipmentCode Code);
+
+public record ShipmentUpdated(ShipmentCode? NewCode, string Notes);
+
+public record ShipmentCodeWithdrawn;
+
+public class Shipment
+{
+    public Guid Id { get; set; }
+
+    [NaturalKey]
+    public ShipmentCode? Code { get; set; }
+
+    public string Notes { get; set; } = string.Empty;
+
+    [NaturalKeySource]
+    public void Apply(ShipmentBooked e) => Code = e.Code;
+
+    // Polecat reads the key off the event here, so a ShipmentUpdated whose NewCode is null means
+    // "this event carries no key", and the stream keeps its code
+    [NaturalKeySource]
+    public void Apply(ShipmentUpdated e)
+    {
+        if (e.NewCode != null) Code = e.NewCode;
+        Notes = e.Notes;
+    }
+
+    // A static source that returns the key type is explicit, so its null removes the stream's key
+    [NaturalKeySource]
+    public static ShipmentCode? KeyFor(ShipmentCodeWithdrawn e) => null;
+
+    public void Apply(ShipmentCodeWithdrawn e) => Code = null;
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/natural_key_null_sources.cs#L13-L51' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_natural_key_sources_and_null' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+The same rule applies when a projection rebuild repopulates the lookup table, since a rebuild replays the same events.
+
+In Polecat 5 a `null` key value was always ignored, so there was no way to remove a stream's key. Polecat 6 lets an
+explicit source do that, and keeps ignoring a `null` from a source it infers, so a conditional `Apply` can't free a key
+by accident (jasperfx#1287).
+
+An `int` or `long` key of 0 is a key like any other: Polecat writes it to the lookup table.
+
+`FetchForWriting` and `FetchForExclusiveWriting` refuse a null key with an `ArgumentNullException`, because a null key
+can't match a stream. Check for a missing key before fetching. `FetchLatest` by a null key returns `null`.
 
 ## Clean and Maintenance Operations
 

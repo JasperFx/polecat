@@ -1,3 +1,4 @@
+using JasperFx.Core.Reflection;
 using JasperFx.Events;
 using Microsoft.Data.SqlClient;
 using Polecat.Internal;
@@ -29,8 +30,10 @@ internal static class NaturalKeyFetchPlanner
         var streamColumn = isGuidStream ? "stream_id" : "stream_key";
 
         // Unwrap strong-typed id to primitive
+        // marten#6153: say what to do about it, not only that it happened
         var unwrapped = naturalKey.Unwrap(naturalKeyValue) ?? throw new ArgumentNullException(
-            nameof(naturalKeyValue), "Natural key value cannot be null.");
+            nameof(naturalKeyValue),
+            $"Cannot use a null natural key of type {typeof(TId).FullNameInCode()} to fetch {typeof(T).FullNameInCode()} for writing. A null key can't match a stream, so check for a missing key before fetching");
 
         // Single-round-trip: look up stream id from natural key table, join to streams for locking
         await session.BeginTransactionAsync(cancellation).ConfigureAwait(false);
