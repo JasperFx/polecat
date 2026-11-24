@@ -170,7 +170,7 @@ public class PolecatProjectionOptions
         }
 
         // Resolve the Id type the same way DocumentMapping does
-        var identityType = new DocumentMapping(typeof(T), _storeOptions!).IdType;
+        var identityType = new DocumentMapping(typeof(T), _storeOptions!).AggregateIdType;
         var source = typeof(SingleStreamProjection<,>).CloseAndBuildAs<ProjectionBase>(typeof(T), identityType);
         source.Lifecycle = lifecycle;
         source.AssembleAndAssertValidity();
