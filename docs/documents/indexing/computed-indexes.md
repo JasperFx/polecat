@@ -331,13 +331,27 @@ opts.Schema.For<User>().UniqueIndex(x => x.Email, idx =>
 
 This includes `tenant_id` in the index columns, allowing the same email across different tenants while enforcing uniqueness within each tenant.
 
-Since Polecat 6, as in Marten 10, every **non-unique** index on a conjoined document starts with
-`tenant_id`, because every query against one is scoped to a tenant. A unique index is left alone,
-because a leading `tenant_id` would change what it enforces. To go back to Polecat 5's indexes:
+### Leading every index on a conjoined document with `tenant_id`
+
+On a large conjoined table queried tenant by tenant, it pays to start every **non-unique** index with `tenant_id`, so
+a query in one tenant's session seeks the index on both. This is opt-in, as in Polecat 5 and Marten 10:
 
 ```cs
-opts.Policies.StartIndexesByTenantId = false;
+opts.Policies.StartIndexesByTenantId = true;
 ```
+
+A unique index is always left alone, because a leading `tenant_id` would change what it enforces: a global unique
+index stays unique across tenants. Use `TenancyScope.PerTenant` above for one that is unique within each tenant.
+
+::: tip When to turn it on
+Turn it on for a large conjoined table that's queried tenant by tenant, especially with many tenants. What it costs:
+turning it on drops and recreates every non-unique computed index on each conjoined table, which takes as long as
+building it did, so run that migration through `db-patch` in a maintenance window on a large table. A query across
+tenants (`AnyTenant()`, or a reporting read without a tenant) can no longer seek those indexes, because their first
+column is unconstrained. That's why it isn't the default ([#1134](https://github.com/JasperFx/polecat/issues/1134),
+[marten#6144](https://github.com/JasperFx/marten/issues/6144)). The 6.0 alphas and rc.1 turned it on by default; see
+[the migration guide](/migration-guide#upgrading-to-6-0-defaults-that-changed-with-marten-10) if you ran one.
+:::
 
 ## Serialized Names and `[JsonPropertyName]`
 

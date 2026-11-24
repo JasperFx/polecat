@@ -30,6 +30,13 @@ public class always_create_event_store_columns : OneOffConfigurationsContext
         opts.Events.EnableExtendedProgressionTracking = false;
     }
 
+    // Event metadata is off by default (#1134), so the flags-on store turns it on explicitly
+    private static void columnFlagsOn(StoreOptions opts)
+    {
+        opts.Events.EnableAllEventMetadata();
+        opts.Events.EnableExtendedProgressionTracking = true;
+    }
+
     private static void everyFlagOff(StoreOptions opts)
     {
         opts.RestoreV5Defaults();
@@ -69,8 +76,8 @@ public class always_create_event_store_columns : OneOffConfigurationsContext
     [Fact]
     public async Task a_flags_off_store_drops_nothing_a_flags_on_store_created()
     {
-        // The Polecat 6 defaults: every flag on
-        ConfigureStore(_ => { });
+        // Every flag behind these columns on
+        ConfigureStore(columnFlagsOn);
         await theStore.Database.ApplyAllConfiguredChangesToDatabaseAsync(ct: Ct);
 
         var streamId = Guid.NewGuid();
@@ -102,7 +109,7 @@ public class always_create_event_store_columns : OneOffConfigurationsContext
         }
 
         // And the flags-on store still matches the schema
-        ConfigureStore(_ => { });
+        ConfigureStore(columnFlagsOn);
         await theStore.Database.AssertDatabaseMatchesConfigurationAsync(Ct);
 
         await using var query = theStore.QuerySession();

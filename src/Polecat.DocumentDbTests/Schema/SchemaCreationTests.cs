@@ -143,7 +143,7 @@ public class SchemaCreationTests : IAsyncLifetime
     [Fact]
     public async Task events_table_keeps_metadata_columns_when_disabled()
     {
-        // On by default since Polecat 6 (#1032). Turned off, the columns are still created (#1116, marten#5765):
+        // Off by default (#1134), and set explicitly here. Turned off, the columns are still created (#1116, marten#5765):
         // the flags decide what is written, not what exists.
         var database = CreateDatabase(o =>
         {

@@ -304,7 +304,7 @@ public class sqlserver_descriptor_builder_tests : OneOffConfigurationsContext
 
         await using var raw = theStore.LightweightSession();
 
-        // #1032: the headers column is on by default since Polecat 6, and with no headers its binder
+        // #1032: wherever the headers column is on (off by default again since #1134), with no headers its binder
         // writes NULL typed as nvarchar, which is exactly the placeholder pair this looks for below. A
         // header makes the bound value something no placeholder can be.
         raw.SetHeader("probe", "bound");

@@ -313,9 +313,9 @@ public class operation_result_set_census_tests : OneOffConfigurationsContext
 
             var slices = await session.BuildRaisedEventAppendsAsync(session.WorkTracker.Streams.ToList(), Ct);
 
-            // Four, not three, since Polecat 6 turned the four event metadata columns on by default (#1032):
-            // each event binds more parameters, so fewer fit in one command
-            slices.Count.ShouldBe(4);
+            // Three with the event metadata off, its default (#1134). The 6.0 alphas turned it on (#1032), each
+            // event bound more parameters and fewer fit in one command, which made it four
+            slices.Count.ShouldBe(3);
 
             await check("Append first slice", session, slices[0]);
             await check("Append later slice", session, slices[1]);

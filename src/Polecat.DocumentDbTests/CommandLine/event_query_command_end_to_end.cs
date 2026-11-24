@@ -36,8 +36,8 @@ public class event_query_command_end_to_end
         opts.DatabaseSchemaName = Schema;
         opts.AutoCreateSchemaObjects = AutoCreate.All;
         opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
-        // Deliberately turning user_name off, which is on by default since Polecat 6 (#1032) — the
-        // refusal fact depends on the store genuinely not capturing user_name.
+        // Deliberately turning user_name off, its default (#1134), so the fact doesn't depend on the default —
+        // the refusal fact depends on the store genuinely not capturing user_name.
         opts.Events.EnableUserName = false;
         return opts;
     }

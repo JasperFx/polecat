@@ -87,10 +87,11 @@ public class metadata_dsl_tests
     }
 
     [Fact]
-    public void optional_columns_are_enabled_by_default()
+    public void optional_columns_are_enabled_when_the_store_says_so()
     {
-        // Since Polecat 6 (#1032)
-        var mapping = new DocumentMapping(typeof(PlainDoc), new StoreOptions());
+        var options = new StoreOptions();
+        options.Policies.EnableDocumentMetadataByDefault = true;
+        var mapping = new DocumentMapping(typeof(PlainDoc), options);
 
         mapping.Metadata.CorrelationId.Enabled.ShouldBeTrue();
         mapping.Metadata.CausationId.Enabled.ShouldBeTrue();
@@ -98,14 +99,14 @@ public class metadata_dsl_tests
         mapping.Metadata.Headers.Enabled.ShouldBeTrue();
     }
 
+    // Off by default, as in Polecat 5 (#1134, marten#6144); the 6.0 alphas turned them on (#1032)
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void optional_columns_disabled_when_the_store_says_so(bool restoreV5Defaults)
+    public void optional_columns_disabled_by_default(bool restoreV5Defaults)
     {
         var options = new StoreOptions();
         if (restoreV5Defaults) options.RestoreV5Defaults();
-        else options.Policies.EnableDocumentMetadataByDefault = false;
 
         var mapping = new DocumentMapping(typeof(PlainDoc), options);
 

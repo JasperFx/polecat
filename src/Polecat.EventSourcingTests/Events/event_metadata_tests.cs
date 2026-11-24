@@ -296,7 +296,7 @@ public class event_metadata_tests : OneOffConfigurationsContext
     [Fact]
     public async Task user_name_column_created_but_not_written_when_disabled()
     {
-        // On by default since Polecat 6 (#1032). Turned off, the column is still created (#1116, marten#5765), and
+        // Off by default (#1134), and set explicitly here. Turned off, the column is still created (#1116, marten#5765), and
         // nothing is written to it or read from it.
         await ConfigureAndApply(opts => opts.Events.EnableUserName = false);
 
