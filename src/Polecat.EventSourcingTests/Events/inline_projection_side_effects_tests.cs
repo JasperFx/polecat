@@ -23,9 +23,11 @@ public partial class inline_projection_side_effects_tests : OneOffConfigurations
         {
             opts.DatabaseSchemaName = "inline_se_off";
             opts.Events.MessageOutbox = outbox;
-            // EnableSideEffectsOnInlineProjections defaults to false
+            // On by default since Polecat 6 (#1134 kept it on), so turn it off explicitly, and use the
+            // projection that does publish, so the assertion would see a side effect if one ran
+            opts.Events.EnableSideEffectsOnInlineProjections = false;
             opts.Projections.Add(
-                new SingleStreamProjection<InlineSeAggregate, Guid>(),
+                new InlineSeProjection(),
                 ProjectionLifecycle.Inline);
         });
         await theDatabase.ApplyAllConfiguredChangesToDatabaseAsync(ct: TestContext.Current.CancellationToken);
