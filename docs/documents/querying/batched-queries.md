@@ -139,6 +139,25 @@ var capped = batch.Events.FetchStream(streamId, version: 5);
 var tail = batch.Events.FetchStream(streamId, fromVersion: 10);
 ```
 
+### Aggregates <Badge type="tip" text="6.0" />
+
+`batch.Events` also fetches aggregates: `FetchLatest`, `FetchForWriting` (with or without an expected version) and
+`FetchForExclusiveWriting`, by stream id, by a strong-typed id, or by a [natural key](/events/natural-keys#batch-queries),
+owned or mapped. Each is one command, so they all share the batch's round trip:
+
+```cs
+var batch = session.CreateBatchQuery();
+
+var order = batch.Events.FetchLatest<OrderAggregate>(orderId);
+var summary = batch.Events.FetchLatest<OrderSummary, OrderNumber>(orderNumber);
+var stream = batch.Events.FetchForWriting<OrderAggregate, OrderNumber>(orderNumber);
+
+await batch.Execute();
+```
+
+The writing forms need a document session, and hand back the same `IEventStream<T>` the standalone fetch does. An
+exclusive fetch opens the session's transaction before the batch runs, and holds its lock until the session commits.
+
 ## Event Stream Query Plans
 
 `FetchStreamStatePlan` and `FetchStreamPlan` wrap those fetches as query plans. Both implement **both**
