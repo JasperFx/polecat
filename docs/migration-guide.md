@@ -7,7 +7,7 @@ Fisher 2 and Wolverine 7.
 
 - **Targets `net10.0` and `net11.0`.** `net9.0` is dropped. The `net11.0` build is compiled with runtime-async and
   uses the .NET 11 GA packages.
-- **Dependencies:** JasperFx 3.14.0, Weasel 10, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
+- **Dependencies:** JasperFx 3.15.1, Weasel 10.0.0, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
   for `Polecat.EntityFrameworkCore`.
 - **Defaults follow Marten 10**: extended progression tracking, inline projection side effects (with a startup
   warning for each inline projection that has them), parking, late-event recovery, the event append counter and
@@ -56,8 +56,8 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.14.0 |
-| `Weasel.SqlServer`, `Weasel.Storage`, `Weasel.EntityFrameworkCore` | 9.50.0 | 10.0.0-rc.1 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.15.1 |
+| `Weasel.SqlServer`, `Weasel.Storage`, `Weasel.EntityFrameworkCore` | 9.50.0 | 10.0.0 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.2 |
 | `Microsoft.Extensions.*` (net11.0) | n/a | 11.0.0 |
 | `Microsoft.EntityFrameworkCore.SqlServer` (`Polecat.EntityFrameworkCore`, net10.0) | 10.0.0 (9.0.14 on net9.0) | 10.0.0 |
