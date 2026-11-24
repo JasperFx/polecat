@@ -257,7 +257,8 @@ out, the shard pauses with `ShardFailure.IsTransient` true.
 Building a batch again is safe in a way that replaying a command is not. Nothing has been written when the
 build fails, and the batch is sliced again from the same events. It's a separate pipeline because the
 commands a build runs already go through `StoreOptions.ResiliencePipeline`, and a retry on both would
-multiply.
+multiply. See [Transient failures](https://shared-libs.jasperfx.net/events/parked-identities#transient-failures) in
+the JasperFx documentation for what counts as transient, and how this fits with parking, pausing and skipping.
 
 ```cs
 // More patience for a load spike

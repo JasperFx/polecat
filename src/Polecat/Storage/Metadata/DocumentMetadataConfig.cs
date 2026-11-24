@@ -8,16 +8,16 @@ namespace Polecat.Storage.Metadata;
 /// </summary>
 public class DocumentMetadataConfig
 {
-    /// <summary>Stored correlation id (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
+    /// <summary>Stored correlation id (#241). Off by default, as in Polecat 5 (#1134); see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn CorrelationId { get; } = new("correlation_id");
 
-    /// <summary>Stored causation id (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
+    /// <summary>Stored causation id (#241). Off by default, as in Polecat 5 (#1134); see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn CausationId { get; } = new("causation_id");
 
-    /// <summary>Stored user / last-modified-by (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
+    /// <summary>Stored user / last-modified-by (#241). Off by default, as in Polecat 5 (#1134); see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn LastModifiedBy { get; } = new("last_modified_by");
 
-    /// <summary>Stored custom headers (#241). On by default since Polecat 6, see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
+    /// <summary>Stored custom headers (#241). Off by default, as in Polecat 5 (#1134); see <see cref="StorePolicies.EnableDocumentMetadataByDefault" />.</summary>
     public MetadataColumn Headers { get; } = new("headers");
 
     /// <summary>The always-present <c>created_at</c> column; <see cref="MetadataColumn.Member" /> maps it onto a document member.</summary>
@@ -65,8 +65,8 @@ public class DocumentMetadataConfig
     }
 
     /// <summary>
-    ///     The optional columns Polecat adds to document tables (#241), on by default since Polecat 6
-    ///     (<see cref="StorePolicies.EnableDocumentMetadataByDefault" />). The remaining columns
+    ///     The optional columns Polecat adds to document tables (#241), off by default unless
+    ///     <see cref="StorePolicies.EnableDocumentMetadataByDefault" /> turns them on for every type (#1134). The remaining columns
     ///     are either always present (<c>created_at</c>/<c>last_modified</c>/<c>version</c>/
     ///     <c>tenant_id</c>/<c>dotnet_type</c>) or governed by their own feature (<c>is_deleted</c>).
     /// </summary>

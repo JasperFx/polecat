@@ -29,9 +29,11 @@ namespace Polecat.Tests.Projections;
 ///         database setup.
 ///     </para>
 ///     <para>
-///         The full inventory + status table lives at
-///         <c>docs/projection-sg-audit-108.md</c>; this file is the
-///         executable companion to that audit.
+///         This file is the executable companion to the #108 audit. The audit's
+///         inventory + status table was published as <c>docs/projection-sg-audit-108.md</c>
+///         until 6.0 (it is in git history); the consumer-facing contract it checked is
+///         JasperFx's "Projection Apply Dispatch" page,
+///         https://shared-libs.jasperfx.net/codegen/projection-apply-dispatch.
 ///     </para>
 ///     <para>
 ///         <b>Deliberately not covered here</b>:

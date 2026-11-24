@@ -212,7 +212,8 @@ there were texts is refused rather than silently attaching embeddings to the wro
 Since Polecat 5.30 the body of this projection is `JasperFx.Events.Vectors`' — `VectorProjectionMap<TId>`
 declares the mapping, and `VectorEmbeddingPlan<TId>` does the fold, the hashing, the unchanged-content
 skip and the batched model call. Every store wrote that same code, and one copy is what stops a
-fourth port from being a fourth dialect.
+fourth port from being a fourth dialect. Both types are documented in full in
+[Vector projections](https://shared-libs.jasperfx.net/search/#vector-projections) in the JasperFx documentation.
 
 What stays Polecat's is the two things only a store can do: read the stored hashes, and write the
 documents. Plus the live aggregation above, which is a decision each store makes for itself.

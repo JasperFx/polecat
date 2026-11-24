@@ -39,10 +39,8 @@ public record CalcIndexedChild
 public record CalcIndexedProjection(int Number, int Cell, string Word);
 
 // marten#5949: an index into an array on the document translated in Marten only in a single-index Where()
-// comparison. Polecat has no translation for an index into a document member at all (no ArrayIndex / get_Item /
-// ElementAt handling anywhere under src/Polecat/Linq), so Where() and OrderBy() are expected to be refused, and
-// Select() is projected in memory from the whole document. The probes allow the refusal where Marten translates,
-// and pin Marten's answers where Polecat answers.
+// comparison. Polecat now translates an index into a document member (ArrayIndex, get_Item and ElementAt, in
+// Linq/Members/DocumentPaths.cs) into a JSON path, and the probes pin Marten's answers where Polecat answers.
 public class document_array_index_tests : OneOffConfigurationsContext
 {
     internal static readonly CalcIndexedDoc[] Docs = Enumerable.Range(1, 6).Select(i => new CalcIndexedDoc

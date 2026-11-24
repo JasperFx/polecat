@@ -28,7 +28,7 @@ public class rewriting_stored_events_per_tenant_partition : IAsyncLifetime
 
         _store = DocumentStore.For(opts =>
         {
-            opts.EventGraph.AddRewriteTransform<ParcelSent>("bang", e => e with { To = e.To + "!" });
+            opts.Events.AddRewriteTransform<ParcelSent>("bang", e => e with { To = e.To + "!" });
             opts.ConnectionString = ConnectionSource.ConnectionString;
             opts.DatabaseSchemaName = Schema;
             opts.AutoCreateSchemaObjects = AutoCreate.All;

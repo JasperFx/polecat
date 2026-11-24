@@ -1,4 +1,4 @@
-# Rewriting Stored Events <Badge type="tip" text="6.0" />
+# Rewriting Stored Events <Badge type="tip" text="6.0" /> {#rewriting-stored-events}
 
 Events are immutable, and most of the time that is exactly right. But how an event is *stored* can fall behind how
 the application would store it today:
@@ -166,7 +166,7 @@ A rewrite can also run as a long-running Wolverine job, started from CritterWatc
 transforms by name, so a transform the job uses is registered up front:
 
 ```cs
-opts.EventGraph.AddRewriteTransform<PersonMoved>("upper-case-cities",
+opts.Events.AddRewriteTransform<PersonMoved>("upper-case-cities",
     e => e with { City = e.City.ToUpperInvariant() });
 ```
 

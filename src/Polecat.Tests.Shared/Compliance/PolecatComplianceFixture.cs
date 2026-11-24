@@ -133,8 +133,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
             options.Events.StreamIdentity = config.StreamIdentity.Value;
         }
 
-        // Set either way: the suites declare which metadata a store tracks, and since Polecat 6 (#1032)
-        // all four are on by default, so a flag the config leaves false has to be turned off.
+        // Set either way: the suites declare which metadata a store tracks, so the store captures exactly what
+        // the config asks for whatever Polecat's default is (off, as in Polecat 5, since #1134; the 6.0 alphas
+        // turned all four on, #1032).
         options.Events.EnableCorrelationId = config.EnableCorrelationTracking;
         options.Events.EnableCausationId = config.EnableCorrelationTracking;
 
@@ -439,6 +440,15 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     ///     routes the FetchForWriting / FetchForExclusiveWriting / FetchLatest triple through it.
     /// </summary>
     public override bool SupportsNaturalKeys => true;
+
+    /// <summary>
+    ///     jasperfx 3.13 (marten 696141240). False because it is <b>not built yet</b>, not a divergence: Polecat
+    ///     has no <c>[MappedNaturalKey&lt;T&gt;]</c> / <c>[NaturalKey(SourceProjection = ...)]</c> resolution
+    ///     through the owning aggregate's lookup. <c>MappedNaturalKeyCompliance</c> and the mapped facts of
+    ///     <c>NaturalKeyRegistrationCompliance</c> skip until it is. Tracked by polecat#1131, which ports
+    ///     Marten 10's natural key work.
+    /// </summary>
+    public override bool SupportsMappedNaturalKeys => false;
 
     /// <summary>
     ///     #561 / jasperfx#752. Polecat routes every event hydration path through the shared
@@ -765,6 +775,13 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     public override bool SupportsPendingEventAges => true;
 
     /// <summary>
+    ///     jasperfx#1282 (#1130) — <c>RegisteredAggregateTypes()</c> answers from
+    ///     <c>ProjectionGraph.AllAggregateTypes()</c>, and <c>PolecatDatabase.FetchAggregateStreamStatsAsync</c>
+    ///     groups <c>pc_streams</c> by its <c>type</c> column in one round trip, never reading <c>pc_events</c>.
+    /// </summary>
+    public override bool SupportsAggregateStreamStats => true;
+
+    /// <summary>
     ///     jasperfx#1048 (polecat#806) — <c>EventDataMasking</c> derives from <c>EventDataMaskingBase</c>, and
     ///     its <c>*IncludingArchived*</c> reads go through <c>QueryEventStore</c>'s archive-inclusive reads,
     ///     so a masking pass reaches an archived stream's events.
@@ -954,9 +971,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         public void UseMessageOutbox(RecordingMessageOutbox outbox)
             => _options.Events.MessageOutbox = outbox;
 
-        // jasperfx#1215: a named transform an EventRewriteDefinition refers to, on the store's own event registry
+        // jasperfx#1215: a named transform an EventRewriteDefinition refers to, registered the way a user would (#1137)
         public void AddRewriteTransform<TEvent>(string name, Func<TEvent, TEvent> transform) where TEvent : class
-            => _options.EventGraph.AddRewriteTransform(name, transform);
+            => _options.Events.AddRewriteTransform(name, transform);
 
         // Wave 13 / jasperfx#725: composites. The seam member carries a throwing default because a
         // composite cannot be constructed by a suite -- PolecatCompositeProjection's constructor is

@@ -10,6 +10,9 @@ fine in an application, which has picked a store. It is a wall for a library tha
 Fisher. Until Polecat 5.30 it could not ask for "the ten documents nearest this embedding" at all,
 because every store's answer to that question was behind a cast to store internals.
 
+[The search contract](https://shared-libs.jasperfx.net/search/#the-search-contract) in the JasperFx documentation
+describes the contract, its filters, and how every store is held to it.
+
 ## The `Search` accessor
 
 ```csharp

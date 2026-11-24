@@ -371,6 +371,60 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
             .Select(x => x.NaturalKeyDefinition)
             .Where(x => x != null)!;
 
+    /// <summary>
+    ///     #1134 (marten#6144): since Polecat 6, side effects run on inline projections by default, inside the
+    ///     <c>SaveChangesAsync()</c> that touches the projection. In Polecat 5 a <c>RaiseSideEffects()</c> override on
+    ///     an Inline projection never ran, so an upgraded application can start publishing messages on commit without
+    ///     having changed a line. Said once per projection when the store is built, so it shows up in the
+    ///     application's own log.
+    /// </summary>
+    internal void WarnAboutInlineSideEffects(ILogger logger)
+    {
+        foreach (var name in InlineProjectionsThatRaiseSideEffects())
+        {
+            logger.LogWarning(
+                "Inline projection {Projection} overrides RaiseSideEffects(), so its side effects run inside every SaveChangesAsync() that touches it, in the same transaction, and any messages it publishes go out with that commit. This is the Polecat 6 default; in Polecat 5 the override never ran for an Inline projection. Set opts.Events.EnableSideEffectsOnInlineProjections = false to keep the Polecat 5 behavior",
+                name);
+        }
+    }
+
+    /// <summary>
+    ///     The names of the Inline projections whose side effects run on commit: none unless
+    ///     <see cref="EnableSideEffectsOnInlineProjections" /> is on, and then each one that overrides
+    ///     <c>RaiseSideEffects()</c> itself.
+    /// </summary>
+    internal IReadOnlyList<string> InlineProjectionsThatRaiseSideEffects()
+    {
+        if (!EnableSideEffectsOnInlineProjections) return [];
+
+        return _options.Projections.All
+            .OfType<ProjectionBase>()
+            .Where(x => x.Lifecycle == ProjectionLifecycle.Inline && overridesRaiseSideEffects(x.GetType()))
+            .Select(x => x.Name)
+            .ToList();
+    }
+
+    [UnconditionalSuppressMessage("Trimming", "IL2070",
+        Justification = "Projection types are registered by the application and preserved per the AOT publishing guide. A trimmed RaiseSideEffects override only means the startup warning is not written.")]
+    private static bool overridesRaiseSideEffects(Type projectionType)
+    {
+        try
+        {
+            // An override declared by the application's own projection, not one inherited from JasperFx or Polecat
+            return projectionType
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Any(m => m.Name == "RaiseSideEffects"
+                          && m.DeclaringType != m.GetBaseDefinition().DeclaringType
+                          && m.DeclaringType!.Assembly != typeof(ProjectionBase).Assembly
+                          && m.DeclaringType.Assembly != typeof(EventGraph).Assembly);
+        }
+        catch (Exception)
+        {
+            // Only feeds a warning, so a reflection failure must never stop the store from building
+            return false;
+        }
+    }
+
     private ManagedTenantPartitions? _tenantPartitions;
 
     /// <summary>
@@ -1015,7 +1069,7 @@ public class EventGraph : EventRegistry, IAggregationSourceFactory<IQuerySession
 
         try
         {
-            return new DocumentMapping(aggregateType, _options).IdType;
+            return new DocumentMapping(aggregateType, _options).AggregateIdType;
         }
         catch (InvalidOperationException e)
         {

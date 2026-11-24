@@ -1,4 +1,4 @@
-# Event Upcasting <Badge type="tip" text="5.23" />
+# Event Upcasting <Badge type="tip" text="5.23" /> {#event-upcasting}
 
 Event schemas change; the events already in `pc_events` do not. **Upcasting** transforms a stored
 event into the current CLR type **on read**, so aggregates, projections and subscriptions only ever

@@ -104,7 +104,7 @@ By default, Polecat uses SQL Server 2025's native `json` data type for document 
 opts.UseNativeJsonType = false;
 ```
 
-See [JSON Serialization](/configuration/json#falling-back-to-nvarcharmax) for more details.
+See [JSON Serialization](/configuration/json#falling-back-to-nvarchar-max) for more details.
 
 ## Store Policies
 

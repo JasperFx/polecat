@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using JasperFx.Events.Daemon;
 using JasperFx.Events.Projections;
 using Polecat.Events;
@@ -108,6 +110,11 @@ public partial class DocumentStore : IDocumentStore
 
         // Initialize projection graph - builds async shard registry
         options.Projections.AssertValidity(options);
+
+        // #1134 (marten#6144): name each Inline projection whose RaiseSideEffects() now runs inside every save
+        options.EventGraph.WarnAboutInlineSideEffects(options.DotNetLogger
+                                                      ?? options.LogFactory?.CreateLogger(typeof(DocumentStore))
+                                                      ?? NullLogger.Instance);
 
         _inlineProjections = new Lazy<IInlineProjection<IDocumentSession>[]>(
             () => options.Projections.BuildInlineProjections());

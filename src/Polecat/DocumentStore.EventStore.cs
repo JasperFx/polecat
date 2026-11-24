@@ -73,6 +73,14 @@ public partial class DocumentStore : IEventStore<IDocumentSession, IQuerySession
         Options.Tenancy?.Cardinality ?? DatabaseCardinality.Single;
 
     /// <summary>
+    ///     jasperfx#1282 (#1130, marten#6152): every aggregate type this store knows, each once. Read alongside
+    ///     <see cref="IEventDatabase.FetchAggregateStreamStatsAsync" />, which reports the types found on stored
+    ///     streams, including types started with no projection registered for them.
+    /// </summary>
+    IReadOnlyList<Type> IEventStore.RegisteredAggregateTypes() =>
+        Options.Projections.AllAggregateTypes().Distinct().ToList();
+
+    /// <summary>
     ///     jasperfx#914 — true when this store has an event store: any registered event type, or any
     ///     projection or subscription (Marten's <c>EventGraph.IsActive</c>, which Polecat had no twin of).
     ///     Computed on every read, never cached: an event type registered lazily on first append makes a

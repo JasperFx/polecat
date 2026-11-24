@@ -545,15 +545,10 @@ public class StoreOptions
     ///     <para>
     ///     Each one is a row in the Polecat 6 migration guide. Restored settings:
     ///     <list type="bullet">
-    ///       <item><see cref="EventStoreOptions.EnableCorrelationId" />, <see cref="EventStoreOptions.EnableCausationId" />,
-    ///       <see cref="EventStoreOptions.EnableHeaders" /> and <see cref="EventStoreOptions.EnableUserName" /> &rarr; <c>false</c>.
-    ///       The <c>pc_events</c> columns stay in the schema; appends stop writing them</item>
-    ///       <item><see cref="StorePolicies.EnableDocumentMetadataByDefault" /> &rarr; <c>false</c></item>
     ///       <item><see cref="OpenTelemetryOptions.EventCountersEnabled" /> &rarr; <c>false</c></item>
     ///       <item><c>AllowOutOfOrderMetadataProperties</c> &rarr; <c>false</c> on Polecat's default serializer.
     ///       Options you passed to <see cref="ConfigureSerialization(JsonSerializerOptions, EnumStorage, Casing, CollectionStorage, NonPublicMembersStorage, Action{JsonSerializerOptions})" />
     ///       are left as you set them.</item>
-    ///       <item><see cref="StorePolicies.StartIndexesByTenantId" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.EnableSideEffectsOnInlineProjections" /> &rarr; <c>false</c></item>
     ///       <item><see cref="EventStoreOptions.DcbConflictScope" /> &rarr; <c>DcbConflictScope.TagValue</c></item>
     ///       <item><see cref="EventStoreOptions.EnableLateEventDetection" /> &rarr; <c>false</c></item>
@@ -572,17 +567,17 @@ public class StoreOptions
     ///       </item>
     ///     </list>
     ///     </para>
+    ///     <para>
+    ///     Event metadata (<see cref="EventStoreOptions.EnableCorrelationId" /> and the rest),
+    ///     <see cref="StorePolicies.EnableDocumentMetadataByDefault" /> and
+    ///     <see cref="StorePolicies.StartIndexesByTenantId" /> are not listed because Polecat 6 kept their
+    ///     Polecat 5 defaults, as Marten 10 did (#1134, marten#6144): all off, so there is nothing to restore,
+    ///     and one you turned on before calling this method stays on.
+    ///     </para>
     /// </remarks>
     public void RestoreV5Defaults()
     {
-        Events.EnableCorrelationId = false;
-        Events.EnableCausationId = false;
-        Events.EnableHeaders = false;
-        Events.EnableUserName = false;
         Events.EnableSideEffectsOnInlineProjections = false;
-
-        Policies.EnableDocumentMetadataByDefault = false;
-        Policies.StartIndexesByTenantId = false;
 
         OpenTelemetry.EventCountersEnabled = false;
 
@@ -650,7 +645,19 @@ public class StoreOptions
     ///     The lock everything provisioning this store's schema serializes on (#664, #868).
     /// </summary>
     internal Internal.SchemaMigrationLock BuildMigrationLock() =>
-        new(DatabaseSchemaName, StartupMigrationLockTimeout);
+        new(DatabaseSchemaName, StartupMigrationLockTimeout, DeclaresPartitionObjects);
+
+    /// <summary>
+    ///     Whether this store declares any partitioned table: <c>pc_events</c> under archived-stream partitioning,
+    ///     anything under per-tenant partitioning, or a document type with RANGE partitioning. Weasel names a
+    ///     partition function and scheme after the table alone, and both belong to the database, so another store
+    ///     in another schema of the same database declares the same ones, and migrations that may touch them
+    ///     serialize across the whole database (#1136).
+    /// </summary>
+    internal bool DeclaresPartitionObjects() =>
+        EventGraph.UseArchivedStreamPartitioning
+        || EventGraph.AnyTenantPartitioning
+        || (Providers?.AllProviders.Any(p => p.Mapping.Partitioning is not null) ?? false);
 
     /// <summary>
     ///     Internal access to the document provider registry. Set by DocumentStore during construction.
@@ -1053,31 +1060,34 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public string? DatabaseSchemaName { get; set; }
 
     /// <summary>
-    ///     Enable tracking of correlation id metadata on events. On by default since Polecat 6;
-    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
+    ///     Enable tracking of correlation id metadata on events. Off by default, as in Polecat 5 and Marten 10
+    ///     (#1134, marten#6144). Turn it on for CritterWatch's event query filters, and to link a Wolverine
+    ///     conversation to the events it appended. The <c>pc_events</c> column exists either way (#1116).
     /// </summary>
-    public bool EnableCorrelationId { get; set; } = true;
+    public bool EnableCorrelationId { get; set; }
 
     /// <summary>
-    ///     Enable tracking of causation id metadata on events. On by default since Polecat 6;
-    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
+    ///     Enable tracking of causation id metadata on events. Off by default, as in Polecat 5 and Marten 10
+    ///     (#1134, marten#6144). Turn it on for CritterWatch's event query filters, and to link a Wolverine
+    ///     conversation to the events it appended. The <c>pc_events</c> column exists either way (#1116).
     /// </summary>
-    public bool EnableCausationId { get; set; } = true;
+    public bool EnableCausationId { get; set; }
 
     /// <summary>
-    ///     Enable tracking of custom headers metadata on events. On by default since Polecat 6;
-    ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
+    ///     Enable tracking of custom headers metadata on events. Off by default, as in Polecat 5 and Marten 10
+    ///     (#1134, marten#6144). The <c>pc_events</c> column exists either way (#1116).
     /// </summary>
-    public bool EnableHeaders { get; set; } = true;
+    public bool EnableHeaders { get; set; }
 
     /// <summary>
     ///     #237: enable tracking of the user / last-modified-by metadata on events, persisted to the
-    ///     opt-in <c>user_name</c> column (maps <see cref="JasperFx.Events.IEvent.UserName" />).
+    ///     <c>user_name</c> column (maps <see cref="JasperFx.Events.IEvent.UserName" />).
     ///     Mirrors Marten's opt-in <c>user_name</c> event-metadata column. Populated from the
-    ///     session's <c>LastModifiedBy</c> when the event doesn't already carry one. On by default since
-    ///     Polecat 6; <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off.
+    ///     session's <c>LastModifiedBy</c> when the event doesn't already carry one. Off by default, as in
+    ///     Polecat 5 and Marten 10 (#1134, marten#6144); turn it on for CritterWatch's event query filter on
+    ///     user name. The <c>pc_events</c> column exists either way (#1116).
     /// </summary>
-    public bool EnableUserName { get; set; } = true;
+    public bool EnableUserName { get; set; }
 
     /// <summary>
     ///     Method to enable all optional metadata fields on events: correlation id, causation id,
@@ -1099,6 +1109,9 @@ public class EventStoreOptions : IEventStoreInstrumentation
     ///     <see cref="StoreOptions.RestoreV5Defaults" /> turns it back off. Mirrors Marten's
     ///     <c>StoreOptions.Events.EnableSideEffectsOnInlineProjections</c>. CritterWatch relies on this so
     ///     its inline ServiceSummary projection can publish SignalR notifications via the Wolverine outbox.
+    ///     Side effects run inside every <c>SaveChangesAsync()</c> that touches the projection, in the same
+    ///     transaction, so the store logs a warning at startup naming each Inline projection that overrides
+    ///     <c>RaiseSideEffects()</c> (#1134, marten#6144).
     /// </summary>
     public bool EnableSideEffectsOnInlineProjections { get; set; } = true;
 
@@ -1308,6 +1321,27 @@ public class EventStoreOptions : IEventStoreInstrumentation
     public void AddMaskingRuleForProtectedInformation<T>(Func<T, T> func) where T : notnull
     {
         EventGraph!.AddMaskingRuleForProtectedInformation(func);
+    }
+
+    /// <summary>
+    ///     jasperfx#1215: register a named transform that a stored-event rewrite
+    ///     (<c>EventRewriteDefinition.Transforms</c>) can refer to, to change events read as
+    ///     <typeparamref name="T" />, or a type assignable to it, before the rewrite writes them back. Mirrors
+    ///     Marten 10's <c>opts.Events.AddRewriteTransform&lt;T&gt;(...)</c> (marten#6162) and Fisher's, so the
+    ///     same registration compiles against every store. It was only reachable through the
+    ///     <c>StoreOptions.EventGraph</c> escape hatch before (polecat#1137).
+    /// </summary>
+    /// <remarks>
+    ///     This rewrites history. Nothing derived from the old events, such as projections, natural keys or tags,
+    ///     is updated.
+    /// </remarks>
+    /// <param name="name">The name a rewrite definition uses to refer to this transform</param>
+    /// <param name="transform">Returns the event to write back in place of the stored one</param>
+    /// <typeparam name="T">The event type, or a base type of it</typeparam>
+    /// <exception cref="InvalidOperationException">A transform with this name is already registered.</exception>
+    public void AddRewriteTransform<T>(string name, Func<T, T> transform) where T : class
+    {
+        EventGraph!.AddRewriteTransform(name, transform);
     }
 
     /// <summary>

@@ -1080,6 +1080,9 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         var unwrapped = naturalKey.Unwrap(id);
         if (unwrapped == null) return default;
 
+        // #1139: create the event store schema, the lookup table with it, on first use (#219)
+        await _sessionBase.EnsureEventStoreSchemaAsync(cancellation).ConfigureAwait(false);
+
         var isGuidStream = _events.StreamIdentity == StreamIdentity.AsGuid;
         var schema = _events.DatabaseSchemaName;
         var qualifiedTableName = _events.NaturalKeyTableName(naturalKey.AggregateType);

@@ -137,7 +137,22 @@ for the versioning mechanics.
 
 Since Polecat 6, as in Marten 10, Polecat runs `RaiseSideEffects()` for projections under the
 `Inline` lifecycle as well as during continuous asynchronous processing. In Polecat 5 this was
-opt-in. To turn it off:
+opt-in. When the store is built, it logs a warning naming each `Inline` projection that overrides
+`RaiseSideEffects()`, so an upgraded application sees which projections started running theirs.
+
+::: tip What it costs, and what it buys
+An `Inline` projection's side effects run inside every `SaveChangesAsync()` that touches the projection, in the same
+transaction, so their work adds to that commit's time, and the messages they publish go out with the commit. A
+projection that doesn't override `RaiseSideEffects()` pays nothing.
+
+In return, a projection behaves the same whether it runs `Inline` or `Async`. A side effect can also pass the
+triggering event's correlation id on to the message it publishes, with `slice.PublishMessage(message, metadata)`, so
+[CritterWatch](https://critterwatch.jasperfx.net)'s conversation view follows a command to the events it appended and
+on to the messages the projection sent. That needs the event correlation id [turned on](/events/metadata), which is
+off by default.
+:::
+
+To turn it off:
 
 ```cs
 builder.Services.AddPolecat(opts =>

@@ -58,7 +58,7 @@ public class document_metadata_filter_tests
             opts.DatabaseSchemaName = schema;
             opts.AutoCreateSchemaObjects = AutoCreate.All;
             opts.UseNativeJsonType = ConnectionSource.SupportsNativeJson;
-            // Set either way: since Polecat 6 (#1032) the columns are on unless a type turns them off
+            // Set both ways, so these facts hold whatever the default is (off since #1134)
             opts.Schema.For<DiagMetaDoc>().Metadata(m =>
             {
                 m.CorrelationId.Enabled = enableCorr;

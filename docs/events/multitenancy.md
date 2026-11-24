@@ -106,13 +106,13 @@ The async daemon starts one daemon per tenant database with the default tenant d
 
 ## Default Tenant
 
-When no tenant ID is specified, events are stored with `tenant_id = 'DEFAULT'`. In single-tenant
+When no tenant ID is specified, events are stored with `tenant_id = '*DEFAULT*'`. In single-tenant
 mode, all queries use this default value.
 
-Under **separate database** tenancy the default tenant is disabled, so there is no `'DEFAULT'`
+Under **separate database** tenancy the default tenant is disabled, so there is no `'*DEFAULT*'`
 fallback — every session must name its tenant. See the warning above.
 
-## Per-Tenant Event Partitioning <Badge type="tip" text="4.2" />
+## Per-Tenant Event Partitioning <Badge type="tip" text="4.2" /> {#per-tenant-event-partitioning}
 
 ::: tip
 This is an advanced, opt-in option for large multi-tenanted event stores where a single shared

@@ -67,6 +67,15 @@ var orders = await session.Query<Order>().ToListAsync();
 var order = await session.LoadAsync<Order>(orderId);
 ```
 
+### Indexes that start with `tenant_id`
+
+The computed indexes on a conjoined document don't include `tenant_id` unless you ask, so a query in one tenant's
+session filters the index entries of every tenant. For a large conjoined table queried tenant by tenant, we recommend
+turning on `opts.Policies.StartIndexesByTenantId = true`, which starts every non-unique index with `tenant_id`. It's
+opt-in because turning it on rebuilds those indexes and a query across tenants can no longer seek them; a global unique
+index stays global either way. See
+[Leading every index with `tenant_id`](/documents/indexing/computed-indexes#leading-every-index-on-a-conjoined-document-with-tenant-id).
+
 ## Separate Database Tenancy
 
 Each tenant gets a completely separate SQL Server database:
@@ -99,7 +108,7 @@ The async daemon starts one daemon per tenant database with the default tenant d
 [No default tenant is required](/configuration/multitenancy#no-default-tenant-is-required).
 :::
 
-## Partitioning your own tables by tenant <Badge type="tip" text="6.0" />
+## Partitioning your own tables by tenant <Badge type="tip" text="6.0" /> {#partitioning-your-own-tables-by-tenant}
 
 If you add your own tables to the store through `opts.Storage.ExtendedSchemaObjects` and want them partitioned per
 tenant the same way as the document and event tables, use `opts.Storage.PartitionPerTenant(table)`:

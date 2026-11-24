@@ -85,7 +85,8 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
     /// <summary>
     ///     Shared operation builder used by both the inline append path (<see cref="ApplyAsync" />) and
     ///     the rebuild path (<see cref="QueueUpsertsForEvents" />): an Archived event marks the
-    ///     natural-key row archived; an event carrying a mapped natural key upserts the mapping.
+    ///     natural-key row archived; an event carrying a mapped natural key upserts the mapping; and a null
+    ///     from an explicit key source retires the stream's key (jasperfx#1287).
     /// </summary>
     private void QueueOperationForEvent(DocumentSessionBase sessionBase, object streamId, string tenantId, IEvent e)
     {
@@ -98,12 +99,27 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
             return;
         }
 
-        var naturalKeyValue = NaturalKeyCarriedBy(e);
-        if (naturalKeyValue == null) return;
+        var naturalKeyValue = NaturalKeyCarriedBy(e, out var retiresKeyOnNull);
 
-        // Unwrap strong-typed id to primitive value
-        var unwrapped = _definition.Unwrap(naturalKeyValue);
-        if (unwrapped == null) return;
+        // Unwrap strong-typed id to primitive value. A wrapper whose inner value is null is a null key too.
+        var unwrapped = naturalKeyValue == null ? null : _definition.Unwrap(naturalKeyValue);
+        if (unwrapped == null)
+        {
+            // jasperfx#1287 (marten#6153): only an explicit source -- a [NaturalKeySource] static method that
+            // returns the key type, or a NaturalKeyFor() registration -- removes the stream's key with a null.
+            // A null from a source discovery inferred, such as a conditional Apply, means the event carried no
+            // key, and the stream keeps the one it has: retiring it there would free the key while the
+            // aggregate still held it, so FetchForWriting by that key would start a duplicate stream. Polecat 5
+            // ignored every null, so an explicit source had no way to remove a key at all.
+            if (retiresKeyOnNull)
+            {
+                sessionBase.WorkTracker.Add(
+                    new NaturalKeyRetireOperation(_qualifiedTableName, null, streamId, _isGuidStream,
+                        _isConjoined, tenantId, unicode: _events.UnicodeKeys));
+            }
+
+            return;
+        }
 
         // #435 / marten#5041: retire any OTHER key this stream still owns before writing the current
         // one. The upsert below only ever MERGEs, so without this a renamed aggregate leaves its
@@ -119,8 +135,12 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
                 _definition.AggregateType, _isConjoined, tenantId, unicode: _events.UnicodeKeys));
     }
 
-    private object? NaturalKeyCarriedBy(IEvent e)
+    private object? NaturalKeyCarriedBy(IEvent e, out bool retiresKeyOnNull)
     {
+        retiresKeyOnNull = false;
+
+        // A compaction marker is no key source, so a snapshot without a key retires nothing. On a rebuild,
+        // which is where a marker is replayed, teardown has already emptied the lookup.
         if (IsCompactionMarker(e.Data.GetType())) return NaturalKeyInSnapshotOf(e.Data);
 
         // Check if this event type has a natural key mapping
@@ -132,7 +152,10 @@ internal class NaturalKeyProjection : IInlineProjection<IDocumentSession>
         // silently dropped those and the lookup table was simply never written for that event type) and
         // what lets a key be derived from event metadata. Both call sites into this method — the inline
         // append path and the rebuild path — already hold the real IEvent.
-        return mapping?.Extractor(e);
+        if (mapping == null) return null;
+
+        retiresKeyOnNull = mapping.RetiresKeyOnNull;
+        return mapping.Extractor(e);
     }
 
     // Compared rather than closed with MakeGenericType: the aggregate type is only known at runtime here,

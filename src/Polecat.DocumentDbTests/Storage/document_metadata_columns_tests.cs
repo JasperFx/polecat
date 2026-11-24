@@ -127,10 +127,10 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task columns_not_created_when_turned_off_for_the_store()
+    public async Task columns_not_created_by_default()
     {
-        // Polecat 5's behavior; since Polecat 6 (#1032) they are created by default
-        ConfigureStore(opts => opts.Policies.EnableDocumentMetadataByDefault = false);
+        // Off by default, as in Polecat 5 (#1134, marten#6144); the 6.0 alphas created them (#1032)
+        ConfigureStore(_ => { }); // no metadata config
 
         await using (var session = theStore.LightweightSession())
         {
@@ -146,9 +146,9 @@ public class document_metadata_columns_tests : OneOffConfigurationsContext
     }
 
     [Fact]
-    public async Task columns_created_by_default()
+    public async Task columns_created_when_turned_on_for_the_store()
     {
-        ConfigureStore(_ => { }); // no metadata config
+        ConfigureStore(opts => opts.Policies.EnableDocumentMetadataByDefault = true);
 
         await using (var session = theStore.LightweightSession())
         {

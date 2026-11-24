@@ -15,18 +15,29 @@ Every event automatically includes:
 | `EventTypeName` | Snake_case type name |
 | `DotNetType` | Full .NET type name |
 
-## Optional Metadata Columns
-
-Correlation id, causation id, headers and the user name each have a column on `pc_events`. Since
-Polecat 6 all four are on by default. Turn one off with `opts.Events.EnableCorrelationId`,
-`EnableCausationId`, `EnableHeaders` or `EnableUserName` set to `false`, or all of them with
-`opts.RestoreV5Defaults()`.
-
 ## Turning on Optional Metadata
 
-Correlation id, causation id, headers and the user name are optional and each has its own column on
-`pc_events`. Turn them on one at a time with `opts.Events.EnableCorrelationId`, `EnableCausationId`,
-`EnableHeaders` and `EnableUserName`, or all four at once:
+Correlation id, causation id, headers and the user name are optional. Each one is off by default, as in Polecat 5
+and Marten 10, and you turn on the ones you want. Each has its own column on `pc_events`, which is created whatever
+the settings say ([#1116](https://github.com/JasperFx/polecat/issues/1116)), so turning one on later needs no schema
+migration; the setting only decides what an append writes and what a read returns.
+
+::: tip Why turn them on
+The correlation and causation ids are what tie an event back to the message or request that caused it. With them on,
+[CritterWatch](https://critterwatch.jasperfx.net) can filter events by correlation id, causation id and user name in its
+event query, and its conversation view follows a Wolverine message to the events its handler appended. OpenTelemetry
+traces and your own diagnostics can do the same. Turn on the user name if you want `LastModifiedBy` recorded on every
+event, and headers only if you read them yourself.
+
+What they cost: each one adds a bound value to every appended event, so with all four on fewer events fit in one
+command. The 6.0 alphas turned all four on by default; Marten measured them as most of what its 10.0 release still
+cost on appends (about 11 KB more allocated per append and about 5% slower daemon appends), which is why both stores
+keep them opt-in ([#1134](https://github.com/JasperFx/polecat/issues/1134),
+[marten#6144](https://github.com/JasperFx/marten/issues/6144)). Polecat's own cost has not been measured separately.
+:::
+
+Turn them on one at a time with `opts.Events.EnableCorrelationId`, `EnableCausationId`, `EnableHeaders` and
+`EnableUserName`, or all four at once:
 
 <!-- snippet: sample_polecat_enable_all_event_metadata -->
 <a id='snippet-sample_polecat_enable_all_event_metadata'></a>
