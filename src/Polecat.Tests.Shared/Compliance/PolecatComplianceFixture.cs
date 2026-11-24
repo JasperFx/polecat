@@ -451,6 +451,14 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
     public override bool SupportsMappedNaturalKeys => false;
 
     /// <summary>
+    ///     jasperfx 3.15.0 (jasperfx#684). False because it is <b>not built yet</b>, not a divergence: Polecat's
+    ///     composite teardown tears down every member rather than asking
+    ///     <c>CompositeProjection.MembersToTearDownAsync</c>. <c>CompositeKeepUnchangedMembersCompliance</c> is
+    ///     excused in the suite inventory until polecat#1147.
+    /// </summary>
+    public override bool SupportsKeepingUnchangedCompositeMembers => false;
+
+    /// <summary>
     ///     #561 / jasperfx#752. Polecat routes every event hydration path through the shared
     ///     <c>EventRegistry.Upcasters</c> and implements <c>IUpcastPayload</c> over its own row
     ///     reader and serializer.
