@@ -80,6 +80,12 @@ internal class DocumentTableEnsurer
         _eventStoreEnsured = false;
     }
 
+    /// <summary>
+    ///     #1131: the event store schema gained an object after it was checked, the lookup table of an aggregate
+    ///     registered by its first fetch by natural key.
+    /// </summary>
+    internal void ForgetEventStoreSchema() => _eventStoreEnsured = false;
+
     private int _schemaEnsureExecutions;
 
     /// <summary>

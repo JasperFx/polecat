@@ -21,7 +21,7 @@ namespace Polecat.Events;
 // #256: also implements JasperFx.Events.IReadOnlyEventStore (FetchStream/FetchStreamState/QueryEvents)
 // so DocumentStore.OpenReadOnlyEventStore() can return this as IReadOnlyEventStore. All of its members
 // are already present on the read store.
-internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
+internal partial class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
 {
     private readonly QuerySession _session;
     private readonly StoreOptions _options;
@@ -898,7 +898,7 @@ internal class QueryEventStore : IQueryEventStore, IReadOnlyEventStore
     ///     first because asking for the provider is itself a claim that Polecat owns the document.
     ///     </para>
     /// </remarks>
-    private bool CanReadInlineDocument<T>(Type keyType) where T : class
+    protected bool CanReadInlineDocument<T>(Type keyType) where T : class
         => !_options.CustomProjectionStorageProviders.ContainsKey(typeof(T))
            && _options.Projections.TryFindAggregate(typeof(T), out var projection)
            && projection.Lifecycle == ProjectionLifecycle.Inline

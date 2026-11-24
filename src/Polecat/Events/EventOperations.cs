@@ -34,7 +34,7 @@ namespace Polecat.Events;
     Justification = "Class-level: FindNaturalKeyDefinition<T> reflects PublicProperties on aggregate type T. T flows in from the natural-key-aware Append API on the caller side and is preserved by projection registration.")]
 [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode",
     Justification = "Class-level: routes through JasperFx.Events generic factories and serializer paths that require runtime code generation. AOT consumers register concrete event types and supply a source-generator-backed ISerializer impl.")]
-internal class EventOperations : QueryEventStore, IEventOperations, IEventOperationsHost
+internal partial class EventOperations : QueryEventStore, IEventOperations, IEventOperationsHost
 {
     private readonly DocumentSessionBase _sessionBase;
     private readonly WorkTracker _workTracker;
@@ -579,7 +579,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     ///         is finished, not that a stream is locked and worth trying again on the same session.
     ///     </para>
     /// </remarks>
-    private static SqlException? FindLockFailure(Exception e)
+    internal static SqlException? FindLockFailure(Exception e)
     {
         for (var current = e; current != null; current = current.InnerException)
         {
@@ -595,7 +595,7 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
         return null;
     }
 
-    private static bool IsLockFailure(Exception e)
+    internal static bool IsLockFailure(Exception e)
     {
         return FindLockFailure(e) != null;
     }
@@ -1072,158 +1072,6 @@ internal class EventOperations : QueryEventStore, IEventOperations, IEventOperat
     /// </remarks>
     private string databaseIdentifier()
         => _sessionBase.Options.Tenancy?.GetDatabase(_tenantId).Identifier ?? "Polecat";
-
-    /// <summary>
-    ///     Unwrap a strong-typed identifier that wraps the stream identity, so the generic
-    ///     &lt;T, TId&gt; overloads can address a stream rather than assuming a natural key.
-    /// </summary>
-    /// <remarks>
-    ///     polecat#417 / marten#5144. A strong-typed id such as <c>PaymentId(Guid)</c> IS the stream
-    ///     identity, just wrapped -- it is not a natural key, which is a domain value resolved
-    ///     through a lookup table. These overloads previously assumed natural key unconditionally,
-    ///     so a wrapper produced a confusing "no natural key definition found" error.
-    ///     A registered natural key always wins, so existing behavior is untouched.
-    /// </remarks>
-    private object? tryUnwrapStreamIdentity<T, TId>(TId id) where T : class where TId : notnull
-    {
-        if (typeof(TId) == typeof(Guid) || typeof(TId) == typeof(string)) return null;
-
-        if (_sessionBase.Options.Projections.FindNaturalKeyDefinition(typeof(T)) != null) return null;
-
-        ValueTypeInfo info;
-        try
-        {
-            info = ValueTypeInfo.ForType(typeof(TId));
-        }
-        catch (InvalidValueTypeException)
-        {
-            return null;
-        }
-
-        if (info.SimpleType == typeof(Guid)) return info.UnWrapper<TId, Guid>()(id);
-        if (info.SimpleType == typeof(string)) return info.UnWrapper<TId, string>()(id);
-
-        return null;
-    }
-
-    public async Task<IEventStream<T>> FetchForWriting<T, TId>(TId id, CancellationToken cancellation = default)
-        where T : class where TId : notnull
-    {
-        switch (tryUnwrapStreamIdentity<T, TId>(id))
-        {
-            case Guid streamId: return await Writes.FetchForWriting<T>(streamId, cancellation).ConfigureAwait(false);
-            case string streamKey: return await Writes.FetchForWriting<T>(streamKey, cancellation).ConfigureAwait(false);
-        }
-
-        var naturalKey = FindNaturalKeyDefinition<T>();
-        return await NaturalKeyFetchPlanner.FetchForWritingByNaturalKey<T, TId>(
-            _sessionBase, _events, _workTracker, naturalKey, id, _tenantId, cancellation).ConfigureAwait(false);
-    }
-
-    public async Task<IEventStream<T>> FetchForExclusiveWriting<T, TId>(TId id, CancellationToken cancellation = default)
-        where T : class where TId : notnull
-    {
-        switch (tryUnwrapStreamIdentity<T, TId>(id))
-        {
-            case Guid streamId: return await Writes.FetchForExclusiveWriting<T>(streamId, cancellation).ConfigureAwait(false);
-            case string streamKey: return await Writes.FetchForExclusiveWriting<T>(streamKey, cancellation).ConfigureAwait(false);
-        }
-
-        // FetchForWritingByNaturalKey already uses UPDLOCK, HOLDLOCK for exclusive locking
-        var naturalKey = FindNaturalKeyDefinition<T>();
-        return await NaturalKeyFetchPlanner.FetchForWritingByNaturalKey<T, TId>(
-            _sessionBase, _events, _workTracker, naturalKey, id, _tenantId, cancellation).ConfigureAwait(false);
-    }
-
-    public async ValueTask<T?> FetchLatest<T, TId>(TId id, CancellationToken cancellation = default)
-        where T : class where TId : notnull
-    {
-        switch (tryUnwrapStreamIdentity<T, TId>(id))
-        {
-            case Guid streamId: return await FetchLatest<T>(streamId, cancellation).ConfigureAwait(false);
-            case string streamKey: return await FetchLatest<T>(streamKey, cancellation).ConfigureAwait(false);
-        }
-
-        var naturalKey = FindNaturalKeyDefinition<T>();
-        var unwrapped = naturalKey.Unwrap(id);
-        if (unwrapped == null) return default;
-
-        // #1139: create the event store schema, the lookup table with it, on first use (#219)
-        await _sessionBase.EnsureEventStoreSchemaAsync(cancellation).ConfigureAwait(false);
-
-        var isGuidStream = _events.StreamIdentity == StreamIdentity.AsGuid;
-        var schema = _events.DatabaseSchemaName;
-        var qualifiedTableName = _events.NaturalKeyTableName(naturalKey.AggregateType);
-        var streamColumn = isGuidStream ? "stream_id" : "stream_key";
-
-        // Look up stream id from natural key table (read-only, no locking)
-        await using var cmd = new SqlCommand();
-
-        var tenantFilter = _events.TenancyStyle == TenancyStyle.Conjoined
-            ? " AND nk.tenant_id = @tenantId"
-            : "";
-
-        cmd.CommandText = $"""
-            SELECT nk.{streamColumn}
-            FROM {qualifiedTableName} nk
-            WHERE nk.natural_key_value = @naturalKey AND nk.is_archived = 0{tenantFilter};
-            """;
-        cmd.Parameters.AddWithValue("@naturalKey", unwrapped); // natural_key_value is nvarchar(200)
-        if (_events.TenancyStyle == TenancyStyle.Conjoined)
-        {
-            cmd.Parameters.AddKey("@tenantId", _tenantId, _events.UnicodeKeys);
-        }
-
-        var result = await _sessionBase.ExecuteScalarAsync(cmd, cancellation).ConfigureAwait(false);
-        if (result == null || result == DBNull.Value) return default;
-
-        // Delegate to existing FetchLatest with the resolved stream id
-        if (isGuidStream)
-        {
-            return await FetchLatest<T>((Guid)result, cancellation).ConfigureAwait(false);
-        }
-        else
-        {
-            return await FetchLatest<T>((string)result, cancellation).ConfigureAwait(false);
-        }
-    }
-
-    private NaturalKeyDefinition FindNaturalKeyDefinition<T>() where T : class
-    {
-        var definition = _sessionBase.Options.Projections.FindNaturalKeyDefinition(typeof(T));
-        if (definition != null) return definition;
-
-        // Auto-discover natural key from [NaturalKey] attribute on the aggregate type
-        // and register an inline single-stream projection if none exists
-        var naturalKeyProp = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .FirstOrDefault(p => p.GetCustomAttribute<NaturalKeyAttribute>() != null);
-
-        if (naturalKeyProp != null)
-        {
-            var projections = _sessionBase.Options.Projections;
-            var projection = new SingleStreamProjection<T, Guid>();
-            projection.Lifecycle = JasperFx.Events.Projections.ProjectionLifecycle.Inline;
-            projection.AssembleAndAssertValidity();
-
-            foreach (var eventType in projection.IncludedEventTypes)
-                _events.AddEventType(eventType);
-
-            projections.All.Add((JasperFx.Events.Projections.IProjectionSource<IDocumentSession, IQuerySession>)projection);
-
-            definition = projections.FindNaturalKeyDefinition(typeof(T));
-            if (definition != null) return definition;
-        }
-
-        // #369 / jasperfx#571: this used to point users at a "NaturalKey()" API that exists in neither
-        // Polecat nor JasperFx.Events. NaturalKeyFor() is the real escape hatch — it reaches the
-        // NaturalKeyBuilder<TDoc> that was unreachable dead code until jasperfx#571 made its constructor
-        // public.
-        throw new InvalidOperationException(
-            $"No natural key definition found for aggregate type '{typeof(T).Name}'. " +
-            $"Mark the key property on {typeof(T).Name} with [NaturalKey] and annotate the event handler(s) " +
-            "that set it with [NaturalKeySource], or register the mapping explicitly from the projection with " +
-            "NaturalKeyFor(x => x.SetBy<TEvent>(e => ...)).");
-    }
 
     public async Task CompactStreamAsync<T>(Guid streamId, Action<StreamCompactingRequest<T>>? configure = null)
         where T : class

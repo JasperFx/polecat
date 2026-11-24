@@ -48,4 +48,76 @@ public interface IBatchEvents
     /// <param name="fromVersion">If set, fetches events on or from this version</param>
     Task<IReadOnlyList<IEvent>> FetchStream(string streamKey, long version = 0,
         DateTimeOffset? timestamp = null, long fromVersion = 0);
+
+    // ---- #1131 / #1050 (marten#6150): aggregates, by stream id and by natural key ----
+    // Default interface members, so that an implementation compiled against Polecat 5 still loads. Polecat's own
+    // batch implements every one of them.
+
+    /// <summary>
+    ///     The batched form of <c>FetchLatest&lt;T&gt;(Guid)</c>: the aggregate's latest state, or null when the
+    ///     stream does not exist.
+    /// </summary>
+    Task<T?> FetchLatest<T>(Guid id) where T : class => throw notSupported();
+
+    /// <summary>The batched form of <c>FetchLatest&lt;T&gt;(string)</c>.</summary>
+    Task<T?> FetchLatest<T>(string key) where T : class => throw notSupported();
+
+    /// <summary>
+    ///     The batched form of <c>FetchLatest&lt;T, TId&gt;</c>: by a natural key, owned or mapped
+    ///     (<c>[MappedNaturalKey&lt;TSource&gt;]</c>), by a strong-typed stream id, or by the stream id. A null key
+    ///     finds nothing, without a query.
+    /// </summary>
+    Task<T?> FetchLatest<T, TId>(TId id) where T : class where TId : notnull => throw notSupported();
+
+    /// <summary>
+    ///     The batched form of <c>FetchForWriting&lt;T&gt;(Guid)</c>. Needs a document session.
+    /// </summary>
+    Task<IEventStream<T>> FetchForWriting<T>(Guid id) where T : class => throw notSupported();
+
+    /// <summary>The batched form of <c>FetchForWriting&lt;T&gt;(string)</c>. Needs a document session.</summary>
+    Task<IEventStream<T>> FetchForWriting<T>(string key) where T : class => throw notSupported();
+
+    /// <summary>
+    ///     The batched form of <c>FetchForWriting&lt;T&gt;(Guid, long)</c>: fails with a concurrency exception when
+    ///     the stream is not at <paramref name="expectedVersion" />. Needs a document session.
+    /// </summary>
+    Task<IEventStream<T>> FetchForWriting<T>(Guid id, long expectedVersion) where T : class
+        => throw notSupported();
+
+    /// <summary>The batched form of <c>FetchForWriting&lt;T&gt;(string, long)</c>. Needs a document session.</summary>
+    Task<IEventStream<T>> FetchForWriting<T>(string key, long expectedVersion) where T : class
+        => throw notSupported();
+
+    /// <summary>
+    ///     The batched form of <c>FetchForExclusiveWriting&lt;T&gt;(Guid)</c>. The session's transaction is opened
+    ///     before the batch runs, and the stream stays locked until it ends. Needs a document session.
+    /// </summary>
+    Task<IEventStream<T>> FetchForExclusiveWriting<T>(Guid id) where T : class => throw notSupported();
+
+    /// <summary>The batched form of <c>FetchForExclusiveWriting&lt;T&gt;(string)</c>. Needs a document session.</summary>
+    Task<IEventStream<T>> FetchForExclusiveWriting<T>(string key) where T : class => throw notSupported();
+
+    /// <summary>
+    ///     The batched form of <c>FetchForWriting&lt;T, TId&gt;</c>: by a natural key, owned or mapped, by a
+    ///     strong-typed stream id, or by the stream id. A key no stream has gets a handle on a new stream. Needs a
+    ///     document session.
+    /// </summary>
+    Task<IEventStream<T>> FetchForWriting<T, TId>(TId id) where T : class where TId : notnull
+        => throw notSupported();
+
+    /// <summary>
+    ///     The batched form of <c>FetchForWriting&lt;T, TId&gt;(TId, long)</c>. A stale version fails before the
+    ///     session is touched. Needs a document session.
+    /// </summary>
+    Task<IEventStream<T>> FetchForWriting<T, TId>(TId id, long expectedVersion) where T : class where TId : notnull
+        => throw notSupported();
+
+    /// <summary>
+    ///     The batched form of <c>FetchForExclusiveWriting&lt;T, TId&gt;</c>. Needs a document session.
+    /// </summary>
+    Task<IEventStream<T>> FetchForExclusiveWriting<T, TId>(TId id) where T : class where TId : notnull
+        => throw notSupported();
+
+    private static NotSupportedException notSupported()
+        => new("This IBatchEvents implementation does not fetch aggregates. Polecat's own batched query does.");
 }

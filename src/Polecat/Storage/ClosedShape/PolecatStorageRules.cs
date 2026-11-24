@@ -301,6 +301,19 @@ internal sealed class PolecatStorageRules<TDoc, TId> : IClosedShapeStorageRules<
         AppendBatchLoadFilters(builder, tenantId);
     }
 
+    /// <summary>
+    ///     #1131: by an id the same command resolved into a T-SQL variable, which is how an Inline aggregate is
+    ///     read by its natural key in one round trip. The variable carries the id column's own type.
+    /// </summary>
+    public void WriteLoadByIdExpressionSql(Weasel.SqlServer.ICommandBuilder builder, string selectClause,
+        string idExpression, string tenantId)
+    {
+        builder.Append(selectClause);
+        builder.Append(" WHERE id = ");
+        builder.Append(idExpression);
+        AppendBatchLoadFilters(builder, tenantId);
+    }
+
     /// <summary>#273: the batched-query read seam — many ids.</summary>
     public void WriteLoadManySql(Weasel.SqlServer.ICommandBuilder builder, string selectClause,
         IReadOnlyList<object> ids, string tenantId)

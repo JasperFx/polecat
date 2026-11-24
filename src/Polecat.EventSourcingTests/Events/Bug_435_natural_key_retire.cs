@@ -76,9 +76,11 @@ public class Bug_435_natural_key_retire : IAsyncLifetime
                 TestContext.Current.CancellationToken);
             byNew.Id.ShouldBe(streamId);
 
-            await Should.ThrowAsync<InvalidOperationException>(
-                query.Events.FetchForWriting<OrderAggregate, OrderNumber>(oldKey,
-                    TestContext.Current.CancellationToken));
+            // #1131: the old key names no stream now, so it fetches a new one
+            var byOld = await query.Events.FetchForWriting<OrderAggregate, OrderNumber>(oldKey,
+                TestContext.Current.CancellationToken);
+            byOld.Id.ShouldNotBe(streamId);
+            byOld.StartingVersion.ShouldBe(0);
         }
     }
 

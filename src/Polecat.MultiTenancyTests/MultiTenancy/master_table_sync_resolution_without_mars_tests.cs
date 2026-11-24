@@ -31,9 +31,16 @@ public class master_table_sync_resolution_without_mars_tests
         _output = output;
     }
 
+    // ConnectTimeout: SqlClient creates a pool's physical connections one at a time, so in the cold burst below the
+    // last lookup waits behind every other one's login, and on a loaded CI runner that ran past the 5 seconds the
+    // test connection string allows (2 of 8 lookups failed "prior to obtaining a connection from the pool", PR
+    // #1150, SQL Server 2022). The burst's own 20 second bound is what this test asserts, so the wait for a pooled
+    // connection is given longer than that and can't fail it first.
     private static readonly string MarsConnectionString =
-        new SqlConnectionStringBuilder(ConnectionSource.ConnectionString) { MultipleActiveResultSets = true }
-            .ConnectionString;
+        new SqlConnectionStringBuilder(ConnectionSource.ConnectionString)
+        {
+            MultipleActiveResultSets = true, ConnectTimeout = 30
+        }.ConnectionString;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

@@ -17,9 +17,9 @@ public class aggregate_stream_stats_compliance
  * Also new in 3.13 (marten 696141240), and found unenrolled by polecat_compliance_suite_inventory:
  *
  *   - NaturalKeyRegistrationCompliance: the natural key registrations a store refuses while it is built, and the
- *     TKey / TKey? mixes it accepts. The owned-key facts run; the mapped-key facts skip.
- *   - MappedNaturalKeyCompliance: every fact skips, because Polecat has no mapped natural keys yet
- *     (SupportsMappedNaturalKeys is false on PolecatComplianceFixture, with the reason beside it).
+ *     TKey / TKey? mixes it accepts.
+ *   - MappedNaturalKeyCompliance: an aggregate fetched by a key whose lookup another aggregate owns. Both run in
+ *     full since #1131 / #1050 brought Marten 10's natural key work across (SupportsMappedNaturalKeys).
  */
 
 public class natural_key_registration_compliance

@@ -55,6 +55,13 @@ internal sealed class SubClassPolecatStorage<T, TRoot, TId>
         AppendDocTypeFilter(builder);
     }
 
+    public void WriteLoadByIdExpressionSql(Weasel.SqlServer.ICommandBuilder builder, string idExpression,
+        string tenantId)
+    {
+        BatchParent.WriteLoadByIdExpressionSql(builder, idExpression, tenantId);
+        AppendDocTypeFilter(builder);
+    }
+
     public void WriteLoadManySql(Weasel.SqlServer.ICommandBuilder builder, IReadOnlyList<object> ids, string tenantId)
     {
         BatchParent.WriteLoadManySql(builder, ids, tenantId);

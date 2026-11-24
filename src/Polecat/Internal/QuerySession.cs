@@ -300,6 +300,9 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     internal Task EnsureEventStoreSchemaAsync(CancellationToken token)
         => _tableEnsurer.EnsureEventStoreSchemaAsync(HasOpenTransaction, token);
 
+    /// <summary>#1131: see <see cref="DocumentTableEnsurer.ForgetEventStoreSchema" />.</summary>
+    internal void ForgetEventStoreSchema() => _tableEnsurer.ForgetEventStoreSchema();
+
     /// <summary>
     ///     Whether this session has a transaction open, which is what decides whether a schema ensure on
     ///     its behalf may wait for the migration lock (#868).
@@ -315,6 +318,13 @@ internal partial class QuerySession : IQuerySession, JasperFx.Events.IEventTenan
     /// </summary>
     internal Task EnsureDocumentTableAsync(Type documentType, CancellationToken token)
         => _tableEnsurer.EnsureTableAsync(_providers.GetProvider(documentType), HasOpenTransaction, token);
+
+    /// <summary>
+    ///     The closed-shape QueryOnly storage a batched load reads through, for a read composed outside
+    ///     <see cref="Batching.BatchedQuery" />: an Inline aggregate fetched by its natural key (#1131).
+    /// </summary>
+    internal Storage.ClosedShape.IPolecatBatchLoadStorage<T> BatchLoadStorageFor<T>() where T : class
+        => (Storage.ClosedShape.IPolecatBatchLoadStorage<T>)_providers.ClosedShapeGraph.StorageFor<T>().QueryOnly;
 
     public Task<bool> CheckExistsAsync<T>(long id, CancellationToken token = default) where T : class
         => CheckExistsInternalAsync<T>(id, TenantId, token);

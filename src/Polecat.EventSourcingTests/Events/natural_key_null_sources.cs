@@ -218,8 +218,11 @@ public class natural_key_null_sources : IAsyncLifetime
         session.Events.StartStream<Shipment>(streamId, new ShipmentBooked(code));
 
         (await session.Events.FetchLatest<Shipment, ShipmentCode>(code, TestContext.Current.CancellationToken)).ShouldBeNull();
-        await Should.ThrowAsync<InvalidOperationException>(() =>
-            session.Events.FetchForWriting<Shipment, ShipmentCode>(code, TestContext.Current.CancellationToken));
+
+        // #1131: the committed lookup has no row for the key, so this is a handle on another, new stream
+        var handle = await session.Events.FetchForWriting<Shipment, ShipmentCode>(code, TestContext.Current.CancellationToken);
+        handle.Id.ShouldNotBe(streamId);
+        handle.StartingVersion.ShouldBe(0);
 
         // After the commit, the same key finds the stream
         await session.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -234,7 +237,8 @@ public class natural_key_null_sources : IAsyncLifetime
         using var store = CreateStore();
         await using var session = store.LightweightSession();
 
-        var ex = await Should.ThrowAsync<ArgumentNullException>(() =>
+        // #1131 (marten#6150): refused the way an empty Guid or a null string stream id is
+        var ex = await Should.ThrowAsync<ArgumentOutOfRangeException>(() =>
             session.Events.FetchForWriting<Shipment, ShipmentCode>(new ShipmentCode(null!), TestContext.Current.CancellationToken));
 
         ex.Message.ShouldContain(typeof(ShipmentCode).FullName!);

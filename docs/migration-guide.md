@@ -35,6 +35,10 @@ Fisher 2 and Wolverine 7.
   member no longer rebuilds the others. See
   [keeping members that didn't change](/events/projections/composite#keeping-members-that-didn-t-change).
 - **DCB:** a check no longer bumps the tags it read, and a conflict honours the event types the query selects.
+- **Natural keys at parity with Marten 10:** mapped keys (`[MappedNaturalKey<T>]`) that make an `Async` read model
+  fetchable by key, nullable keys, one round trip per fetch, fetches by key in a batched query, `FetchForWriting` by
+  key with an expected version, and `FetchManyForWriting` by key. A few behaviours change on the way: see
+  [natural keys](#upgrading-to-6-0-natural-keys-work-as-they-do-in-marten-10).
 - **Multi-tenancy:** `Advanced.QueryAcrossAllDatabasesAsync` runs one query against every tenant database
   ([details](/configuration/multitenancy#querying-across-all-databases)), and `opts.Storage.PartitionPerTenant(table)`
   partitions a table of your own per tenant ([details](/documents/multi-tenancy#partitioning-your-own-tables-by-tenant)).
@@ -131,8 +135,64 @@ depends on the source:
 Check any explicit source that can return `null` before upgrading, since its `null` used to be harmless. See
 [natural keys](/events/natural-keys#null-and-default-keys).
 
-The refusal of a null key by `FetchForWriting` and `FetchForExclusiveWriting` is still an `ArgumentNullException`,
-and its message now names the key and aggregate types and says to check for a missing key before fetching.
+The refusal of a null key by `FetchForWriting` and `FetchForExclusiveWriting` is now an `ArgumentOutOfRangeException`
+whose message names the key and aggregate types and says to check for a missing key before fetching. See
+[natural keys](#upgrading-to-6-0-natural-keys-work-as-they-do-in-marten-10).
+
+## Upgrading to 6.0: natural keys work as they do in Marten 10
+
+Polecat 6.0 brings across Marten 10's natural key work ([#1131](https://github.com/JasperFx/polecat/issues/1131),
+[#1050](https://github.com/JasperFx/polecat/issues/1050)), so the same code, and the same Wolverine handlers, behave the
+same way on both stores. See [natural keys](/events/natural-keys) for the new features. These are the changes an
+existing application can notice:
+
+- **`FetchForWriting` by a key no stream has starts a new stream.** It used to throw an `InvalidOperationException`
+  ("No active stream found for natural key"). Now it returns a handle on a new stream at version 0 with a `null`
+  aggregate, as a fetch by an unknown stream id does, and the stream claims the key when you append an event that sets
+  it. The same goes for `FetchForExclusiveWriting`, `FetchManyForWriting` and the batched forms. If you relied on the
+  exception, check `stream.Aggregate == null` instead.
+- **A `null` key is refused with an `ArgumentOutOfRangeException`**, not an `ArgumentNullException`, the way an empty
+  `Guid` or a `null` stream key is. `FetchLatest` by a `null` key still returns `null`, now without a query.
+- **A fetch by `TKey?` is refused** with an `ArgumentException`. A key declared `TKey?` on the aggregate is fetched by
+  `TKey`; handle a `null` value before fetching.
+- **Breaking: a natural key of the stream identity's own type is refused when the store is built.** A bare `string`
+  key on a `StreamIdentity.AsString` store (or a `Guid` key on a `Guid` store) now throws `InvalidProjectionException`
+  when the store is built. Polecat 5 accepted it and looked the key up, but in 6.0 a fetch by `string` on a string store
+  is a fetch by stream key, as it is in Marten 10, so a key of that type could never be reached. The fix is to wrap the
+  key in a strong-typed identifier:
+
+  ```csharp
+  // Polecat 5, on a StreamIdentity.AsString store
+  [NaturalKey]
+  public string Code { get; set; }
+
+  // Polecat 6
+  public record TicketCode(string Value);
+
+  [NaturalKey]
+  public TicketCode Code { get; set; }
+
+  var ticket = await session.Events.FetchLatest<Ticket, TicketCode>(new TicketCode("T-100"));
+  ```
+
+  The lookup table still stores the wrapped `string`, so the existing rows need no migration. A bare `string` key on a
+  `Guid` store keeps working.
+- **`FetchForWriting` by key no longer locks the stream.** It used to open a transaction and read the stream row with
+  `UPDLOCK, HOLDLOCK`, which made every write by key an exclusive one. Now it's optimistic, like `FetchForWriting` by
+  stream id, and the version check at `SaveChangesAsync()` is what catches a concurrent writer. Use
+  `FetchForExclusiveWriting` by key when you want the lock.
+- **`FetchLatest` by key can return the session's own instance.** With `UseIdentityMapForAggregates` on, it answers
+  from the aggregates the session already holds, as `FetchLatest` by stream id does.
+- **`FetchLatest<T, Guid>` and `FetchForWriting<T, Guid>` fetch by stream id** on a `Guid` store, and `string` does
+  the same on a string store. They used to look for a natural key of that type and fail.
+- **Only an owned key registers a projection on the first fetch.** An aggregate with only `[MappedNaturalKey<T>]` keys
+  used to be registered as an `Inline` projection that owned no key. Register it yourself, at whatever lifecycle suits
+  it.
+- **A strong-typed id is a stream id only when it wraps the store's stream identity type.** On a `Guid` store, a fetch
+  by a type that wraps a `string` and isn't one of the aggregate's natural keys now says so, rather than being read as
+  a stream key.
+- **`IBatchEvents` gains `FetchLatest`, `FetchForWriting` and `FetchForExclusiveWriting`.** They are default interface
+  members, so an implementation of your own still compiles and loads.
 
 ## Upgrading to 6.0: live aggregation past the end of a stream finds nothing
 

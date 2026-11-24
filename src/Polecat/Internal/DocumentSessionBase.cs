@@ -41,7 +41,9 @@ namespace Polecat.Internal;
 internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
 {
     private readonly WorkTracker _workTracker = new();
-    private readonly IInlineProjection<IDocumentSession>[] _inlineProjections;
+    // #1131: through the projection graph rather than the array the store handed over, so that a projection
+    // registered by this session's own first fetch by natural key runs on its save
+    private IInlineProjection<IDocumentSession>[] inlineProjectionsForSave => Options.Projections.BuildInlineProjections();
     private readonly IReadOnlyList<IDocumentSessionListener> _sessionListeners;
     private readonly IReadOnlyList<JasperFx.Events.Documents.IDocumentCommitListener> _sessionCommitListeners;
     private readonly IAlwaysConnectedLifetime _transactional;
@@ -62,7 +64,6 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         : base(options, lifetime, providers, tableEnsurer, eventGraph, tenantId)
     {
         _transactional = lifetime;
-        _inlineProjections = inlineProjections;
         _sessionListeners = sessionListeners ?? Array.Empty<IDocumentSessionListener>();
         _sessionCommitListeners = sessionCommitListeners
                                   ?? Array.Empty<JasperFx.Events.Documents.IDocumentCommitListener>();
@@ -1003,10 +1004,10 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             await ProcessStreamsClosedShapeAsync(token).ConfigureAwait(false);
 
             // Apply inline projections — projected document ops are queued into _workTracker
-            if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
+            if (inlineProjectionsForSave.Length > 0 && _workTracker.Streams.Count > 0)
             {
                 var streams = _workTracker.Streams.ToList();
-                foreach (var projection in _inlineProjections)
+                foreach (var projection in inlineProjectionsForSave)
                 {
                     await projection.ApplyAsync(this, streams, token).ConfigureAwait(false);
                 }
@@ -1369,7 +1370,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // entirely from configuration, so it is computed once per store and cached rather than re-derived
         // from Projections.All on every save. #868: it used to run inside the save's transaction, after
         // the appends, where it could not wait for the migration lock. Nothing about it needs to be there.
-        if (_inlineProjections.Length > 0 && _workTracker.Streams.Count > 0)
+        if (inlineProjectionsForSave.Length > 0 && _workTracker.Streams.Count > 0)
         {
             await _tableEnsurer.EnsureTablesAsync(Options.Projections.InlineProjectedProviders, HasOpenTransaction,
                 token).ConfigureAwait(false);
@@ -1396,7 +1397,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         // provisions populate; an already-known tenant is a cached no-op. #864: an inline projection's
         // operations do not exist yet, they are queued inside the transaction, so its streams' tenants
         // have to be taken from the streams or the write finds no registry row.
-        var projectsInline = _inlineProjections.Length > 0 && _workTracker.Streams.Any(s => s.Events.Any());
+        var projectsInline = inlineProjectionsForSave.Length > 0 && _workTracker.Streams.Any(s => s.Events.Any());
         if (Options.Policies.DocumentTenantPartitioningEnabled && (_workTracker.Operations.Count > 0 || projectsInline))
         {
             await _eventGraph.TenantOrdinals.ResolveAsync(TenantId, HasOpenTransaction, token).ConfigureAwait(false);
