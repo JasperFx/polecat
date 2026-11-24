@@ -32,6 +32,9 @@ Fisher 2 and Wolverine 7.
 - **Multi-tenancy:** `Advanced.QueryAcrossAllDatabasesAsync` runs one query against every tenant database
   ([details](/configuration/multitenancy#querying-across-all-databases)), and `opts.Storage.PartitionPerTenant(table)`
   partitions a table of your own per tenant ([details](/documents/multi-tenancy#partitioning-your-own-tables-by-tenant)).
+  `ExposeDynamicTenantSource()` registers a master-table tenancy as `IDynamicTenantSource<string>` for the forms that
+  configure the store late: the `IServiceProvider` overload of `AddPolecat()`, `ConfigurePolecat()` and
+  `AddPolecatStore<T>()` ([details](/configuration/multitenancy#when-the-tenancy-isn-t-known-at-registration)).
 - **`opts.Advanced.UseUnicodeKeys`** stores keys as `nvarchar`, so they can hold any character
   ([details](/configuration/storeoptions#unicode-keys)).
 - **Aspire:** `UseSqlConnectionFromServices()` takes the connection string from the `SqlConnection` that
@@ -124,6 +127,18 @@ Check any explicit source that can return `null` before upgrading, since its `nu
 
 The refusal of a null key by `FetchForWriting` and `FetchForExclusiveWriting` is still an `ArgumentNullException`,
 and its message now names the key and aggregate types and says to check for a missing key before fetching.
+
+## Upgrading to 6.0: live aggregation past the end of a stream finds nothing
+
+`AggregateStreamAsync()` and `AggregateStreamToLastKnownAsync()` with a `version` past the end of the stream now
+return `null`, as they do in Marten ([#1143](https://github.com/JasperFx/polecat/issues/1143),
+[marten#6194](https://github.com/JasperFx/marten/issues/6194)). Polecat 5 returned the aggregate at the stream's last
+event, so asking for version 10 of a 3-event stream looked like an answer about version 10. If you relied on that, ask
+for version `0`, which still means "the latest".
+
+`AggregateStreamToLastKnownAsync()` also no longer rebuilds the aggregate from the start of the stream once for every
+event it walks back over. It folds forward once to find the last event that leaves an aggregate, then builds that
+prefix once, so it returns the same aggregate as before without the quadratic cost of a long trailing run of deletes.
 
 ## Upgrading to 6.0: the net11.0 build uses runtime-async
 
