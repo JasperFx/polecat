@@ -25,6 +25,9 @@ Fisher 2 and Wolverine 7.
   commit late inside them. See [events that commit late](/events/projections/async-daemon#events-that-commit-late).
 - **Reading your own writes**: `session.LastAppendedPosition` and `store.WaitForProjectionsAsync(...)`. See
   [reading your own writes](/events/projections/async-daemon#reading-your-own-writes).
+- **`ProjectLatestForCommit()`** returns an aggregate as `SaveChangesAsync()` will write it, versions, timestamps
+  and metadata included, before the commit. `ProjectLatest()` now also sets the identity of a new stream's
+  aggregate. See [ProjectLatestForCommit](/events/projections/project-latest#projectlatestforcommit).
 - **Rebuilding less than a whole projection**: `RebuildSingleStreamAsync` for one stream, and per-identity rebuilds
   of multi-stream projections. See [rebuilding a single stream](/events/projections/async-daemon#rebuilding-a-single-stream).
 - **Rewriting stored events in bulk**, run directly or as a Wolverine job. See [rewriting](/events/rewriting).
