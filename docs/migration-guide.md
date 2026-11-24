@@ -146,10 +146,28 @@ existing application can notice:
   `Guid` or a `null` stream key is. `FetchLatest` by a `null` key still returns `null`, now without a query.
 - **A fetch by `TKey?` is refused** with an `ArgumentException`. A key declared `TKey?` on the aggregate is fetched by
   `TKey`; handle a `null` value before fetching.
-- **A natural key of the stream identity's own type is refused when the store is built.** A bare `string` key on a
-  `StreamIdentity.AsString` store (or a `Guid` key) throws `InvalidProjectionException`, because a fetch by `string`
-  on that store is a fetch by stream key, and used to find nothing or start a stream named after the key. Wrap the key
-  in a strong-typed identifier. A bare `string` key on a `Guid` store keeps working.
+- **Breaking: a natural key of the stream identity's own type is refused when the store is built.** A bare `string`
+  key on a `StreamIdentity.AsString` store (or a `Guid` key on a `Guid` store) now throws `InvalidProjectionException`
+  when the store is built. Polecat 5 accepted it and looked the key up, but in 6.0 a fetch by `string` on a string store
+  is a fetch by stream key, as it is in Marten 10, so a key of that type could never be reached. The fix is to wrap the
+  key in a strong-typed identifier:
+
+  ```csharp
+  // Polecat 5, on a StreamIdentity.AsString store
+  [NaturalKey]
+  public string Code { get; set; }
+
+  // Polecat 6
+  public record TicketCode(string Value);
+
+  [NaturalKey]
+  public TicketCode Code { get; set; }
+
+  var ticket = await session.Events.FetchLatest<Ticket, TicketCode>(new TicketCode("T-100"));
+  ```
+
+  The lookup table still stores the wrapped `string`, so the existing rows need no migration. A bare `string` key on a
+  `Guid` store keeps working.
 - **`FetchForWriting` by key no longer locks the stream.** It used to open a transaction and read the stream row with
   `UPDLOCK, HOLDLOCK`, which made every write by key an exclusive one. Now it's optimistic, like `FetchForWriting` by
   stream id, and the version check at `SaveChangesAsync()` is what catches a concurrent writer. Use
