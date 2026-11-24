@@ -1311,6 +1311,27 @@ public class EventStoreOptions : IEventStoreInstrumentation
     }
 
     /// <summary>
+    ///     jasperfx#1215: register a named transform that a stored-event rewrite
+    ///     (<c>EventRewriteDefinition.Transforms</c>) can refer to, to change events read as
+    ///     <typeparamref name="T" />, or a type assignable to it, before the rewrite writes them back. Mirrors
+    ///     Marten 10's <c>opts.Events.AddRewriteTransform&lt;T&gt;(...)</c> (marten#6162) and Fisher's, so the
+    ///     same registration compiles against every store. It was only reachable through the
+    ///     <c>StoreOptions.EventGraph</c> escape hatch before (polecat#1137).
+    /// </summary>
+    /// <remarks>
+    ///     This rewrites history. Nothing derived from the old events, such as projections, natural keys or tags,
+    ///     is updated.
+    /// </remarks>
+    /// <param name="name">The name a rewrite definition uses to refer to this transform</param>
+    /// <param name="transform">Returns the event to write back in place of the stored one</param>
+    /// <typeparam name="T">The event type, or a base type of it</typeparam>
+    /// <exception cref="InvalidOperationException">A transform with this name is already registered.</exception>
+    public void AddRewriteTransform<T>(string name, Func<T, T> transform) where T : class
+    {
+        EventGraph!.AddRewriteTransform(name, transform);
+    }
+
+    /// <summary>
     ///     #561 / jasperfx#752: the event upcasting registry — how an event stored under an older
     ///     schema is transformed on READ into the current CLR event type, so aggregations,
     ///     projections and subscriptions only ever see the new type.
