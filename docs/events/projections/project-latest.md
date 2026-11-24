@@ -149,3 +149,102 @@ var report = await session.Events.ProjectLatest<Report>("report-123");
 
 - **Read-only sessions**: `ProjectLatest` is only available on `IDocumentSession.Events`
   (not `IQuerySession.Events`) because it needs access to the session's pending work tracker.
+
+## ProjectLatestForCommit <Badge type="tip" text="6.0" />
+
+`ProjectLatest` folds the pending events as they are before the commit: their versions, timestamps and the
+rest of their metadata aren't set until `SaveChangesAsync()` sets them, so an aggregate that copies any of
+that from its events doesn't get it. `ProjectLatestForCommit<T>()` gives the stream's pending events now the
+versions, ids, timestamps, user name, correlation id, causation id and headers the commit would give them,
+and the commit then keeps them. What it returns is exactly what `FetchLatest` returns once the session has
+committed. Nothing is stored.
+
+This is what an endpoint needs when it stores its response in the same transaction as its work, as
+Wolverine's `[DeduplicatedWithResponse]` endpoints that return the updated aggregate do.
+
+<!-- snippet: sample_polecat_project_latest_for_commit_aggregate -->
+<a id='snippet-sample_polecat_project_latest_for_commit_aggregate'></a>
+```cs
+public record CommitShipmentStarted(string Origin);
+
+public record CommitShipmentScanned(string Location);
+
+// Copies the metadata of the last event it applied
+public partial record CommitShipment
+{
+    public Guid Id { get; set; }
+    public int Scans { get; set; }
+    public Guid LastEventId { get; set; }
+    public long LastEventVersion { get; set; }
+    public DateTimeOffset LastModified { get; set; }
+    public string? LastModifiedBy { get; set; }
+    public string? CorrelationId { get; set; }
+    public string? CausationId { get; set; }
+    public string? TenantId { get; set; }
+
+    public static CommitShipment Create(IEvent<CommitShipmentStarted> e) => new CommitShipment().track(e);
+
+    public void Apply(IEvent<CommitShipmentScanned> e)
+    {
+        Scans++;
+        track(e);
+    }
+
+    private CommitShipment track(IEvent e)
+    {
+        LastEventId = e.Id;
+        LastEventVersion = e.Version;
+        LastModified = e.Timestamp;
+        LastModifiedBy = e.UserName;
+        CorrelationId = e.CorrelationId;
+        CausationId = e.CausationId;
+        TenantId = e.TenantId;
+        return this;
+    }
+}
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/project_latest_for_commit_tests.cs#L8-L48' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_for_commit_aggregate' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+<!-- snippet: sample_polecat_project_latest_for_commit -->
+<a id='snippet-sample_polecat_project_latest_for_commit'></a>
+```cs
+var stream = await session.Events.FetchForWriting<CommitShipment>(id);
+stream.AppendOne(new CommitShipmentScanned("Leeds"));
+
+// The aggregate as SaveChangesAsync() will write it, version, timestamps and metadata included
+var shipment = await session.Events.ProjectLatestForCommit<CommitShipment>(id);
+
+// ...store a response that carries it, in the same transaction
+
+await session.SaveChangesAsync();
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.EventSourcingTests/Events/project_latest_for_commit_tests.cs#L201-L213' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_project_latest_for_commit' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+```csharp
+ValueTask<T?> ProjectLatestForCommit<T>(Guid id, CancellationToken cancellation = default);
+ValueTask<T?> ProjectLatestForCommit<T>(string key, CancellationToken cancellation = default);
+```
+
+The versions have to be known before the commit, so the stream must be one of these:
+
+- started in this session with `StartStream()`
+- fetched with `FetchForWriting()`
+- appended to with an expected version, `Append(id, expectedVersion, ...)`
+
+Anything else throws an `InvalidOperationException`, and leaves the pending events as they were.
+
+A few things to know:
+
+- **The commit refuses a stream whose expected version changes after the call**, because the aggregate it
+  returned was built from versions the commit would no longer write. Call `ProjectLatestForCommit()` again
+  after the last change to the stream.
+- **It takes the stream's id.** A natural key can't be resolved to the stream's pending events before the
+  commit, so a `string` on a `Guid` store throws.
+- **The event sequence is still assigned at commit.** An aggregate that copies `IEvent.Sequence` doesn't get
+  it.
+- **Events appended after the call aren't covered by it.** Call it again to include them. The events the first
+  call prepared keep what they were given.
+- **Session metadata set after the call** is filled in at commit for any event that doesn't have it yet, as
+  usual.

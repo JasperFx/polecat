@@ -210,6 +210,45 @@ This produces one `References<Account>` event per id per slice, so the projectio
 a single event are passed through to the application callback as-is; ids are
 de-duplicated only when fetching from storage to avoid redundant loads.
 
+## Keeping Members That Didn't Change <Badge type="tip" text="6.0" />
+
+By default, bumping a composite's `Version` replays every member, including the ones whose code didn't change.
+On a big composite that can mean rebuilding a large read model because a small one next to it changed.
+
+Turn on `KeepUnchangedMembers` and each member runs under its own version instead. When you deploy a change, bump
+the composite's version **and** the version of each member you changed:
+
+<!-- snippet: sample_polecat_composite_keep_unchanged_members -->
+<a id='snippet-sample_polecat_composite_keep_unchanged_members'></a>
+```cs
+opts.Projections.CompositeProjectionFor(CompositeName, composite =>
+{
+    // Bump the composite's version and the version of each member you changed...
+    composite.Version = compositeVersion;
+    composite.Add(new KeptStableTallyProjection());
+    composite.Add(new KeptChangingTallyProjection { Version = changingVersion });
+
+    // ...and the members whose version didn't change keep their documents and their progress
+    composite.KeepUnchangedMembers = keepUnchangedMembers;
+});
+```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.DaemonTests/Daemon/composite_keep_unchanged_members_tests.cs#L33-L46' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_composite_keep_unchanged_members' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
+
+The composite then replays from the start. A member you changed has a new version, so it starts from nothing, in a
+document table of its own. A member whose version didn't change still has its progression row, so it skips the
+replay up to that row and keeps its documents exactly as they are. Once the replay passes it, it's an ordinary member
+again. A rebuild works the same way right after a bump: it tears down only the members you changed. A rebuild with
+no bump is a repair, so it still rebuilds every member.
+
+Two limits:
+
+- **One stage only.** A member in a later stage reads what the earlier stages produce as they replay, which a kept
+  member wouldn't produce. A composite with more than one stage replays every member, its members take the
+  composite's version as before, and the daemon logs a warning saying so.
+- **No member may enrich itself from another member's documents.** A kept member's documents are already at their
+  latest state while the changed members replay, so an enrichment that reads them would read the future.
+
 ## Use Cases
 
 - **Dependent read models** — Dashboard that depends on individual aggregates
@@ -222,7 +261,9 @@ de-duplicated only when fetching from storage to avoid redundant loads.
 - Composite projections can only run asynchronously.
 - In `pc_event_progression`, you will see rows for both the parent composite and every constituent projection — they should never disagree.
 - You can use as many stages as you wish, but two or three is usually enough.
-- If you rebuild a composite projection, you have to rebuild every constituent projection.
+- If you rebuild a composite projection, you have to rebuild every constituent projection, unless it
+  [keeps its unchanged members](#keeping-members-that-didn-t-change) and you've just bumped it.
 - The constituent projections take the composite's `Version`, whatever they set themselves. Set `composite.Version`
   inside `CompositeProjectionFor()` to deploy a new version, and every member gets its own progression row and
   its own document table (see [blue/green deployments](async-daemon.md#blue-green-deployments-with-projection-versioning)).
+  The exception is a single-stage composite with `KeepUnchangedMembers` on, whose members keep their own versions.

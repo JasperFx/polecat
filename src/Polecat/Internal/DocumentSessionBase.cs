@@ -962,6 +962,9 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         {
             // #832: before any listener or DDL runs on behalf of a save that cannot happen.
             _transactional.AssertWritesAreAllowed();
+
+            // #1145: likewise before any event work, for a stream ProjectLatestForCommit() prepared
+            assertVersionsPinnedForCommitAreUnchanged();
             await prepareToSaveChangesAsync(token).ConfigureAwait(false);
 
             // Was the caller already relying on this transaction before the save? An exclusive fetch's
@@ -1120,6 +1123,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
             var commit = _workTracker.Clone();
 
             _workTracker.Reset();
+            _versionsPinnedForCommit.Clear();
 
             Logger.RecordSavedChanges(this);
 
@@ -1918,15 +1922,58 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
         return op.SplitToFit(Polecat.Linq.SqlGeneration.JsonValueList.Budget);
     }
 
+    // #1145 (marten#6149): the version each stream's pending events were prepared from by ProjectLatestForCommit(),
+    // which the commit must still prepare them from. By reference: a StreamAction is the session's own record of
+    // the stream, and a stream that leaves the unit of work leaves this behind with it.
+    private readonly Dictionary<StreamAction, long> _versionsPinnedForCommit = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    ///     #1145: give <paramref name="stream" />'s pending events now the versions, ids, timestamps and metadata
+    ///     <see cref="SaveChangesAsync" /> will write, and pin the version they were prepared from. The commit keeps
+    ///     the timestamps of a pinned stream's events, so what was projected from them is what it writes.
+    /// </summary>
+    internal void PrepareEventsAsTheCommitWill(StreamAction stream, long baseVersion)
+    {
+        AssignEventMetadataForClosedShape(stream, baseVersion);
+        _versionsPinnedForCommit[stream] = baseVersion;
+    }
+
+    // #1145: the commit refuses a stream whose expected version changed after ProjectLatestForCommit(), because the
+    // aggregate it returned was built from versions this commit would no longer write
+    private void assertVersionsPinnedForCommitAreUnchanged()
+    {
+        if (_versionsPinnedForCommit.Count == 0) return;
+
+        foreach (var (stream, pinned) in _versionsPinnedForCommit)
+        {
+            // A stream ejected from the session is no longer part of this commit
+            if (!_workTracker.Streams.Contains(stream)) continue;
+
+            var current = stream.ActionType == StreamActionType.Start ? 0 : stream.ExpectedVersionOnServer;
+            if (current != pinned)
+            {
+                throw new InvalidOperationException(
+                    $"The expected version of stream '{(object?)stream.Key ?? stream.Id}' changed from {pinned} to " +
+                    $"{current?.ToString() ?? "none"} after ProjectLatestForCommit(), by fetching it for writing again or " +
+                    "appending with a new expected version, so the aggregate it returned no longer matches this commit. " +
+                    "Call ProjectLatestForCommit() again after the last change to the stream.");
+            }
+        }
+    }
+
     private void AssignEventMetadataForClosedShape(StreamAction stream, long baseVersion)
     {
+        // #1145: a stream ProjectLatestForCommit() prepared keeps the timestamps it was given, which the aggregate it
+        // returned was built from. Only an event appended after that call is stamped now.
+        var keepTimestamps = _versionsPinnedForCommit.ContainsKey(stream);
+
         var events = stream.Events;
         for (var i = 0; i < events.Count; i++)
         {
             var e = events[i];
             e.Version = baseVersion + i + 1;
             if (e.Id == Guid.Empty) e.Id = SequentialGuid.NextSqlServerOrder();
-            e.Timestamp = DateTimeOffset.UtcNow;
+            if (!keepTimestamps || e.Timestamp == default) e.Timestamp = DateTimeOffset.UtcNow;
             e.TenantId = stream.TenantId;
             e.StreamId = stream.Id;
             e.StreamKey = stream.Key;
@@ -2193,6 +2240,7 @@ internal abstract class DocumentSessionBase : QuerySession, IDocumentSession
     public void EjectAllPendingChanges()
     {
         _workTracker.Reset();
+        _versionsPinnedForCommit.Clear();
     }
 
     /// <summary>

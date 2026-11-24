@@ -58,16 +58,42 @@ public static class PolecatServiceCollectionExtensions
         //
         // The factory resolves IDocumentStore first so the IConfigurePolecat chain has run and
         // Options.Tenancy is final before it is handed out.
+        //
+        // #1144 (marten#6190): the forms that configure the store lazily (AddPolecat(Func<IServiceProvider,
+        // StoreOptions>), tenancy set through ConfigurePolecat(), AddPolecatStore<T>()) can't be probed here. They
+        // opt in with ExposeDynamicTenantSource() on the expression they return.
         if (options.Tenancy is IDynamicTenantSource<string>)
         {
-            services.AddSingleton<IDynamicTenantSource<string>>(sp =>
-            {
-                var store = (DocumentStore)sp.GetRequiredService<IDocumentStore>();
-                return (IDynamicTenantSource<string>)store.Options.Tenancy!;
-            });
+            RegisterDynamicTenantSource<IDocumentStore>(services);
         }
 
         return expression;
+    }
+
+    // #1144: marks a store whose tenancy is already exposed as IDynamicTenantSource<string>, so registering it twice
+    // (the probe in AddPolecat(StoreOptions), then ExposeDynamicTenantSource()) never puts two entries into
+    // GetServices()
+    private sealed class DynamicTenantSourceRegistration<TStore> where TStore : class, IDocumentStore;
+
+    internal static void RegisterDynamicTenantSource<TStore>(IServiceCollection services)
+        where TStore : class, IDocumentStore
+    {
+        if (services.Any(x => !x.IsKeyedService && x.ServiceType == typeof(DynamicTenantSourceRegistration<TStore>)))
+        {
+            return;
+        }
+
+        services.AddSingleton(new DynamicTenantSourceRegistration<TStore>());
+
+        // Resolved lazily from the built store, so the tenancy is whatever the store's configuration ended in. A
+        // factory that returned null for a store that isn't dynamic would leave that null in GetServices(), which
+        // its consumers don't filter, so a store that turns out not to be dynamic is an error instead.
+        services.AddSingleton<IDynamicTenantSource<string>>(sp =>
+        {
+            var tenancy = ((DocumentStore)(object)sp.GetRequiredService<TStore>()).Options.Tenancy;
+            return tenancy as IDynamicTenantSource<string> ?? throw new InvalidOperationException(
+                $"The {typeof(TStore).Name} store was registered with ExposeDynamicTenantSource(), but its tenancy ({tenancy?.GetType().Name ?? "none"}) is not a dynamic tenant source. Only master table tenancy (MultiTenantedMasterTable()) can be exposed as IDynamicTenantSource<string>.");
+        });
     }
 
     /// <summary>
@@ -75,13 +101,10 @@ public static class PolecatServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     ///     The StoreOptions is not available until the container is built, so this overload cannot
-    ///     auto-register <c>IDynamicTenantSource&lt;string&gt;</c> for a dynamic tenancy the way the
+    ///     register <c>IDynamicTenantSource&lt;string&gt;</c> for a dynamic tenancy on its own the way the
     ///     other overloads do (#377). If you configure <c>MultiTenantedMasterTable()</c> from here and
-    ///     want CritterWatch's runtime tenant management, register it yourself:
-    ///     <code>
-    ///     services.AddSingleton&lt;IDynamicTenantSource&lt;string&gt;&gt;(sp =&gt;
-    ///         (IDynamicTenantSource&lt;string&gt;)((DocumentStore)sp.GetRequiredService&lt;IDocumentStore&gt;()).Options.Tenancy!);
-    ///     </code>
+    ///     want CritterWatch's runtime tenant management, call
+    ///     <see cref="PolecatConfigurationExpression.ExposeDynamicTenantSource" /> on the expression this returns.
     /// </remarks>
     public static PolecatConfigurationExpression AddPolecat(
         this IServiceCollection services, Func<IServiceProvider, StoreOptions> optionSource)
