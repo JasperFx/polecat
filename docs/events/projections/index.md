@@ -2,6 +2,9 @@
 
 Projections are the mechanism for building read models from events. Polecat supports several projection types and lifecycle strategies.
 
+Polecat's projections also feed the event model JasperFx derives from your code. See
+[Event Modeling](https://shared-libs.jasperfx.net/event-modeling/) in the JasperFx documentation.
+
 ## Projection Lifecycle
 
 Every projection runs with one of three lifecycle strategies:
@@ -43,6 +46,14 @@ var order = await session.Events.AggregateStreamAsync<OrderSummary>(streamId);
 ## Conventional Projection Methods
 
 Polecat discovers projection methods by convention:
+
+::: tip
+JasperFx's source generator writes the dispatch to these methods at build time, so the class has to be `partial` and
+each method `public`. [Projection Apply Dispatch](https://shared-libs.jasperfx.net/codegen/projection-apply-dispatch)
+says exactly which projections need what, and [Build Diagnostics](https://shared-libs.jasperfx.net/codegen/diagnostics#projections-and-aggregates)
+explains the build errors and warnings you get when one doesn't qualify, such as `JFXEVT003` (not `partial`) and
+`JFXEVT009` (not `public`).
+:::
 
 ### Create
 

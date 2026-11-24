@@ -12,14 +12,30 @@ one in a predicate:
 
 ## Indexing
 
-An index into an array or a list, or a key of a dictionary, is read as a JSON path anywhere a member can be:
+An index into an array or a list, or a key of a dictionary, is read as a JSON path anywhere a member can be,
+including `Where()`, `OrderBy()` and `Select()`:
 
+<!-- snippet: sample_polecat_linq_indexing -->
+<a id='snippet-sample_polecat_linq_indexing'></a>
 ```cs
-.Where(x => x.Values[1] == 3)
-.Where(x => x.Grid[1][0] > 6 && x.Children[0].Name == "first")
-.OrderBy(x => x.Values.ElementAt(2))
-.Select(x => x.Scores["math"])
+var byElement = await session.Query<Product>()
+    .Where(x => x.Values[1] == 3)
+    .ToListAsync();
+
+var byNestedElement = await session.Query<Product>()
+    .Where(x => x.Grid[1][0] > 6 && x.Children[0].Name == "first")
+    .ToListAsync();
+
+var orderedByElement = await session.Query<Product>()
+    .OrderBy(x => x.Values.ElementAt(2))
+    .ToListAsync();
+
+var byKey = await session.Query<User>()
+    .Where(x => x.Scores["math"] > 80)
+    .ToListAsync();
 ```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.LinqTests/Linq/linq_documentation_samples.cs#L487-L503' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_linq_indexing' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
 
 The index has to be known before the query runs: a constant, a captured local or a static. One past the end
 reads as missing, so it matches no comparison and a scalar `Select` of it reads the type's default, where
@@ -29,6 +45,8 @@ LINQ-to-Objects would throw. A negative index is refused.
 
 `SelectMany()` flattens a collection the documents hold, of child documents or of values, enums and strings:
 
+<!-- snippet: sample_polecat_linq_select_many -->
+<a id='snippet-sample_polecat_linq_select_many'></a>
 ```cs
 var lines = await session.Query<Order>()
     .Where(x => x.Status == "open")
@@ -43,6 +61,8 @@ var rows = await session.Query<Order>()
     .SelectMany(x => x.Lines, (x, l) => new { x.Number, l.Sku })
     .ToListAsync();
 ```
+<sup><a href='https://github.com/JasperFx/polecat/blob/main/src/Polecat.LinqTests/Linq/linq_documentation_samples.cs#L509-L522' title='Snippet source file'>snippet source</a> | <a href='#snippet-sample_polecat_linq_select_many' title='Start of snippet'>anchor</a></sup>
+<!-- endSnippet -->
 
 It is `CROSS APPLY OPENJSON(data, '$.lines')`. Everything before it chooses the parents, so a `Take()` or
 `Skip()` in front of it pages the documents, and one after it pages the flattened rows. The rows come back in

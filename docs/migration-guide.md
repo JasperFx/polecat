@@ -65,6 +65,9 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 Every .NET 11 package Polecat depends on is the 11.0.0 release, not a preview or release candidate.
 
+The JasperFx move from 2.x to 3.x has its own guide, with every 3.x release's changes in one place: see the
+[JasperFx Migration Guide](https://shared-libs.jasperfx.net/migration-guide).
+
 Four consequences worth checking in your own projects:
 
 - **Don't pin `Microsoft.Data.SqlClient` below 7.1.2.** Polecat 6.0 is built and tested against it; a lower
@@ -1781,7 +1784,7 @@ public class MyProjection : SingleStreamProjection<MyAggregate, Guid>
 }
 ```
 
-This matches Marten 9's adoption story for the same JasperFx.Events Phase-1 change. The shared consumer-side contract is documented at greater length in [Marten's migration guide — "Projection apply dispatch is now source-generator-only"](https://martendb.io/migration-guide#projection-apply-dispatch); the Polecat-side adoption tracking lives in [Polecat#46](https://github.com/JasperFx/polecat/issues/46), with the audit harness from [#110](https://github.com/JasperFx/polecat/pull/110) standing as the pre-release gate against future SG regressions.
+This matches Marten 9's adoption story for the same JasperFx.Events Phase-1 change. The shared consumer-side contract is JasperFx's, and is documented at greater length in [Projection Apply Dispatch](https://shared-libs.jasperfx.net/codegen/projection-apply-dispatch). To fail the build when the source generator didn't run at all, rather than at the first projection registration, see [Making sure the generator ran at all](https://shared-libs.jasperfx.net/codegen/diagnostics#making-sure-the-generator-ran-at-all). The Polecat-side adoption tracking lives in [Polecat#46](https://github.com/JasperFx/polecat/issues/46), with the audit harness from [#110](https://github.com/JasperFx/polecat/pull/110) standing as the pre-release gate against future SG regressions.
 
 ##### Convention-method visibility, identity, and required members
 

@@ -12,6 +12,10 @@ handler should see, call the handler, and assert on what it appended.
 identically on Marten and Fisher. It is one of the places where the store-agnostic abstraction pays
 off for an application rather than just for the stores.
 
+The stub itself is documented once, for every store, in
+[Unit Testing Handlers](https://shared-libs.jasperfx.net/events/unit-testing-handlers) in the JasperFx
+documentation. This page shows it against Polecat's types.
+
 ## The handler under test
 
 <!-- snippet: sample_polecat_stub_stream_handler -->
@@ -186,7 +190,9 @@ reason. Tightening the mock to `Received(1).AppendOne(new Withdrawn(100m))` gets
 cost of a setup that breaks whenever the handler is refactored in a way that changes nothing about
 its behaviour.
 
-A recorded list of events is the thing the handler is supposed to produce. Assert on that.
+A recorded list of events is the thing the handler is supposed to produce. Assert on that. The JasperFx
+page makes the same case at more length: see
+[Don't reach for a mocking library here](https://shared-libs.jasperfx.net/events/unit-testing-handlers#don-t-reach-for-a-mocking-library-here).
 
 ## Where the stub stops
 

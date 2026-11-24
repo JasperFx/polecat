@@ -12,7 +12,9 @@ Use natural keys when:
 
 ## Declaring Natural Keys
 
-Mark a property on your aggregate with `[NaturalKey]`, and mark the methods that set or change the key value with `[NaturalKeySource]`:
+Mark a property on your aggregate with `[NaturalKey]`, and mark the methods that set or change the key value with `[NaturalKeySource]`.
+A setup the runtime would refuse, like two natural keys on one aggregate, is a build error (`JFXEVT010` to `JFXEVT017`):
+see [Build Diagnostics: natural keys](https://shared-libs.jasperfx.net/codegen/diagnostics#natural-keys).
 
 <!-- snippet: sample_polecat_natural_key_aggregate_types -->
 <a id='snippet-sample_polecat_natural_key_aggregate_types'></a>

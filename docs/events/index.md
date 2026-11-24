@@ -4,6 +4,10 @@ Polecat provides a full-featured event store built on SQL Server 2025, following
 
 ## Key Concepts
 
+The event store abstractions Polecat implements are JasperFx's, shared with Marten and Fisher, and they include an
+in-memory store to prototype against. See [Event Store Abstractions](https://shared-libs.jasperfx.net/events/) in
+the JasperFx documentation.
+
 - **Event** -- An immutable record of something that happened in your domain
 - **Stream** -- A sequence of events related to a specific aggregate or entity
 - **Aggregate** -- A domain object whose state is derived by replaying events

@@ -295,7 +295,7 @@ Notes:
 This is the Polecat (SQL Server) equivalent of Marten's `MultiTenantedDatabasesViaMasterTable` /
 `MasterTableTenancy`.
 
-### Store-Agnostic Runtime Tenant Management <Badge type="tip" text="5.8" />
+### Store-Agnostic Runtime Tenant Management <Badge type="tip" text="5.8" /> {#store-agnostic-runtime-tenant-management}
 
 The `MasterTableTenancy` methods above are Polecat-specific. `MasterTableTenancy` also implements
 `JasperFx.MultiTenancy.IDynamicTenantSource<string>` — the same store-agnostic abstraction Marten's
@@ -391,8 +391,11 @@ await using var session = store.LightweightSession(new SessionOptions
 });
 ```
 
+Whether `"My-Tenant"` and `"my-tenant"` are the same tenant depends on where the id is compared. See
+[Tenant Id Casing](https://shared-libs.jasperfx.net/configuration/tenant-id-case) in the JasperFx documentation.
+
 ::: warning
-If no tenant ID is specified, Polecat uses `"DEFAULT"` as the tenant ID. In conjoined tenancy mode, this means documents and events will be stored with `tenant_id = 'DEFAULT'`.
+If no tenant ID is specified, Polecat uses `"*DEFAULT*"` (`JasperFx.StorageConstants.DefaultTenantId`) as the tenant ID. In conjoined tenancy mode, this means documents and events will be stored with `tenant_id = '*DEFAULT*'`.
 
 Under **separate database** tenancy this fallback is switched off — see
 [No default tenant is required](#no-default-tenant-is-required) — and a tenantless session throws

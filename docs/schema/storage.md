@@ -65,10 +65,12 @@ version bigint NOT NULL
 ### Conjoined Tenancy
 
 ```sql
-tenant_id nvarchar(250) NOT NULL DEFAULT 'DEFAULT'
+tenant_id varchar(250) NOT NULL
 ```
 
-The primary key becomes composite: `PRIMARY KEY (tenant_id, id)`.
+The primary key becomes composite: `PRIMARY KEY (tenant_id, id)`. The column has no default: every write names its
+tenant, and a session opened without one writes `*DEFAULT*`. It is `nvarchar(250)` with
+`opts.Advanced.UseUnicodeKeys`.
 
 ### Metadata Tracking
 

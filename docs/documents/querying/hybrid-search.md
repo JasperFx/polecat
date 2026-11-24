@@ -152,7 +152,8 @@ what `Query<T>().Where(...)` does.
 ## The fusion is shared
 
 The reciprocal rank fusion itself is `JasperFx.Events.Vectors.ReciprocalRankFusion`, public and
-usable on its own over any number of ranked lists:
+usable on its own over any number of ranked lists. The JasperFx documentation describes the shared contract in
+[Reciprocal rank fusion](https://shared-libs.jasperfx.net/search/#reciprocal-rank-fusion):
 
 ```csharp
 IReadOnlyList<HybridMatch<Passage>> fused =
