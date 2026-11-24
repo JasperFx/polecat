@@ -33,18 +33,27 @@ namespace Polecat.Events.Projections;
 ///         matters because a rebuild replays the same rename sequence and would otherwise reproduce
 ///         exactly the same set of dead rows after teardown.
 ///     </para>
+///     <para>
+///         With no current value it retires <em>every</em> key the stream owns. That is what a null from an
+///         explicit key source means (jasperfx#1287): a <c>[NaturalKeySource]</c> static method returning the
+///         key type, or a <c>NaturalKeyFor()</c> registration, that returns null removes the stream's key, so
+///         the stream can no longer be found by it and another stream can claim it.
+///     </para>
 /// </remarks>
 internal class NaturalKeyRetireOperation : Polecat.Internal.IStorageOperation, Weasel.Storage.NoDataReturnedCall
 {
     private readonly string _tableName;
-    private readonly object _currentNaturalKeyValue;
+    private readonly object? _currentNaturalKeyValue;
     private readonly object _streamId;
     private readonly bool _isGuidStream;
     private readonly bool _isConjoined;
     private readonly string? _tenantId;
     private readonly bool _unicode; // #935
 
-    public NaturalKeyRetireOperation(string tableName, object currentNaturalKeyValue, object streamId,
+    /// <param name="currentNaturalKeyValue">
+    ///     The key the stream is about to own, which is kept, or null to retire every key the stream owns.
+    /// </param>
+    public NaturalKeyRetireOperation(string tableName, object? currentNaturalKeyValue, object streamId,
         bool isGuidStream, bool isConjoined = false, string? tenantId = null, bool unicode = false)
     {
         _tableName = tableName;
@@ -73,8 +82,11 @@ internal class NaturalKeyRetireOperation : Polecat.Internal.IStorageOperation, W
             builder.AppendParameter(_tenantId!, Polecat.Storage.KeyColumns.DbType(_unicode));
         }
 
-        builder.Append(" AND natural_key_value <> ");
-        builder.AppendParameter(_currentNaturalKeyValue);
+        if (_currentNaturalKeyValue != null)
+        {
+            builder.Append(" AND natural_key_value <> ");
+            builder.AppendParameter(_currentNaturalKeyValue);
+        }
 
         builder.Append(";");
     }

@@ -7,7 +7,7 @@ Fisher 2 and Wolverine 7.
 
 - **Targets `net10.0` and `net11.0`.** `net9.0` is dropped. The `net11.0` build is compiled with runtime-async and
   uses the .NET 11 GA packages.
-- **Dependencies:** JasperFx 3.12.1, Weasel 10, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
+- **Dependencies:** JasperFx 3.14.0, Weasel 10, `Microsoft.Data.SqlClient` 7.1.2, and EF Core 10 or 11 by framework
   for `Polecat.EntityFrameworkCore`.
 - **Defaults follow Marten 10**: event and document metadata, extended progression tracking, inline projection side
   effects and projection start floors are on. `RestoreV5Defaults()` puts Polecat 5's defaults back. See
@@ -53,7 +53,7 @@ The foundation pins move in lockstep, so a consuming project has to move with th
 
 | Package | 5.50.0 | 6.0 |
 |---|---|---|
-| `JasperFx`, `JasperFx.Events` | 2.102 | 3.12.1 |
+| `JasperFx`, `JasperFx.Events` | 2.102 | 3.14.0 |
 | `Weasel.SqlServer`, `Weasel.Storage`, `Weasel.EntityFrameworkCore` | 9.50.0 | 10.0.0-rc.1 |
 | `Microsoft.Data.SqlClient` | 7.0.0 | 7.1.2 |
 | `Microsoft.Extensions.*` (net11.0) | n/a | 11.0.0 |
@@ -100,6 +100,24 @@ Two JasperFx 3.12 changes reach Polecat applications
   It used to return normally with the shard paused or stopped, so the rebuild looked finished when it wasn't. It now
   throws the shard's failure, as a single-stream rebuild always has. A full rebuild never parks, so `Projections.RebuildErrors`
   set to `Park` behaves like `Pause` there and throws too.
+
+## Upgrading to 6.0: an explicit natural key source can remove a key with null
+
+In Polecat 5 a `null` natural key value was always ignored: the stream kept its key, and there was no way to remove
+it. With JasperFx 3.14.0 ([jasperfx#1287](https://github.com/JasperFx/jasperfx/issues/1287)) what a `null` means
+depends on the source:
+
+- **An explicit source that returns `null` removes the stream's key.** A `[NaturalKeySource]` static method that
+  returns the key type, or a `NaturalKeyFor()` registration, can now retire a key: the lookup row is deleted, the
+  stream can no longer be found by its old key, and another stream can claim it. A projection rebuild does the same.
+- **A `null` from a source Polecat infers is still ignored.** A key read off the event, or an `Apply` method, keeps
+  the stream's key, so an `Apply` that only sets the key on some events behaves as it did in Polecat 5.
+
+Check any explicit source that can return `null` before upgrading, since its `null` used to be harmless. See
+[natural keys](/events/natural-keys#null-and-default-keys).
+
+The refusal of a null key by `FetchForWriting` and `FetchForExclusiveWriting` is still an `ArgumentNullException`,
+and its message now names the key and aggregate types and says to check for a missing key before fetching.
 
 ## Upgrading to 6.0: the net11.0 build uses runtime-async
 

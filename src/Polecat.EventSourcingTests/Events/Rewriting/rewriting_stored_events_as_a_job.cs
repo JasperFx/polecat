@@ -92,7 +92,7 @@ public class rewriting_stored_events_as_a_job : OneOffConfigurationsContext
     [Fact]
     public async Task a_transform_on_an_interface_selects_every_event_type_that_implements_it()
     {
-        configure(opts => opts.EventGraph.AddRewriteTransform<IRelocation>("upper-city", x => x switch
+        configure(opts => opts.Events.AddRewriteTransform<IRelocation>("upper-city", x => x switch
         {
             PersonMoved p => p with { City = p.City.ToUpperInvariant() },
             CompanyMoved c => c with { City = c.City.ToUpperInvariant() },

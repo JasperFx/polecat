@@ -166,7 +166,7 @@ A rewrite can also run as a long-running Wolverine job, started from CritterWatc
 transforms by name, so a transform the job uses is registered up front:
 
 ```cs
-opts.EventGraph.AddRewriteTransform<PersonMoved>("upper-case-cities",
+opts.Events.AddRewriteTransform<PersonMoved>("upper-case-cities",
     e => e with { City = e.City.ToUpperInvariant() });
 ```
 

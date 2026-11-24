@@ -970,9 +970,9 @@ public class PolecatComplianceFixture : EventStoreComplianceFixture<IDocumentSes
         public void UseMessageOutbox(RecordingMessageOutbox outbox)
             => _options.Events.MessageOutbox = outbox;
 
-        // jasperfx#1215: a named transform an EventRewriteDefinition refers to, on the store's own event registry
+        // jasperfx#1215: a named transform an EventRewriteDefinition refers to, registered the way a user would (#1137)
         public void AddRewriteTransform<TEvent>(string name, Func<TEvent, TEvent> transform) where TEvent : class
-            => _options.EventGraph.AddRewriteTransform(name, transform);
+            => _options.Events.AddRewriteTransform(name, transform);
 
         // Wave 13 / jasperfx#725: composites. The seam member carries a throwing default because a
         // composite cannot be constructed by a suite -- PolecatCompositeProjection's constructor is
